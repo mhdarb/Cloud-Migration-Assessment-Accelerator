@@ -11,3 +11,4 @@ data/
 code_dump.txt
 .DS_Store
 apps/web/.env.local
+apps/web/folder-backup/
