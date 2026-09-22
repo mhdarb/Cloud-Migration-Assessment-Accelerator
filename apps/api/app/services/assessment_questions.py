@@ -1,0 +1,416 @@
+from __future__ import annotations
+
+import re
+from collections.abc import Callable
+from typing import Any
+
+from sqlalchemy.orm import Session
+
+from app.config import get_settings
+from app.models.entities import Claim, DependencyEdge, EngagementQuestion, QuestionOrigin
+from app.services.evidence import resolve_evidence_map
+from app.services.llm_reasoning import GroundedProse, get_grounded_prose
+from app.services.ports import Retriever
+from app.services.questionnaire_extract import normalize_question_key
+
+QUESTION_SET_VERSION = "migration-readiness-v1"
+ASK_MAX_CHARS = 500
+EMPTY_CUSTOM = "The uploaded evidence does not answer this question."
+
+_TOKEN = re.compile(r"[a-z0-9]+", re.I)
+_STOP = {
+    "the",
+    "and",
+    "for",
+    "with",
+    "from",
+    "what",
+    "which",
+    "who",
+    "how",
+    "are",
+    "is",
+    "there",
+    "known",
+    "does",
+    "do",
+    "a",
+    "an",
+    "of",
+    "in",
+    "to",
+    "on",
+    "or",
+    "this",
+    "that",
+    "any",
+    "question",
+}
+_HINTS: list[tuple[tuple[str, ...], set[str]]] = [
+    (("critical", "criticality"), {"business_criticality", "criticality"}),
+    (
+        ("compliance", "pci", "hipaa", "residency", "encryption"),
+        {"compliance", "data_residency", "encryption", "security"},
+    ),
+    (("depend", "integration", "interface"), {"dependency", "integration", "interface"}),
+    (("gap", "blocker", "debt"), {"gap", "constraint", "tech_debt", "blocker"}),
+    (("runtime", "platform", "operating"), {"os", "runtime", "framework", "architecture"}),
+    (
+        ("sla", "rto", "rpo", "latency", "availab", "scale"),
+        {"sla", "availability", "latency", "rto", "rpo", "scalability"},
+    ),
+]
+
+
+def _selected_claims(db: Session, assessment_id: str) -> list[Claim]:
+    return (
+        db.query(Claim)
+        .filter(Claim.assessment_id == assessment_id, Claim.is_selected.is_(True))
+        .all()
+    )
+
+
+def _question_tokens(text: str) -> set[str]:
+    return {t.lower() for t in _TOKEN.findall(text or "") if t.lower() not in _STOP and len(t) > 2}
+
+
+def _hinted_attributes(question: str) -> set[str]:
+    lower = (question or "").lower()
+    attrs: set[str] = set()
+    for needles, names in _HINTS:
+        if any(n in lower for n in needles):
+            attrs |= names
+    return attrs
+
+
+def match_claims_to_question(question: str, claims: list[Claim]) -> list[Claim]:
+    tokens = _question_tokens(question)
+    hinted = _hinted_attributes(question)
+    matches: list[Claim] = []
+    for claim in claims:
+        value = claim.override_value or claim.value
+        blob = f"{claim.entity_type} {claim.entity_key} {claim.attribute} {value}"
+        blob_tokens = _question_tokens(blob)
+        if hinted and claim.attribute in hinted:
+            matches.append(claim)
+            continue
+        if tokens and tokens & blob_tokens:
+            matches.append(claim)
+    return matches
+
+
+def _answer(
+    question_id: str,
+    question: str,
+    claims: list[Claim],
+    predicate: Callable[[Claim], bool],
+    empty: str,
+    *,
+    origin: str = "standard",
+) -> dict[str, Any]:
+    matches = [c for c in claims if predicate(c)]
+    supported = [c for c in matches if c.evidence_refs and not c.unsupported]
+    values = [
+        {
+            "entity": f"{c.entity_type}:{c.entity_key}",
+            "attribute": c.attribute,
+            "value": c.override_value or c.value,
+        }
+        for c in matches
+    ]
+    answer = (
+        "; ".join(
+            f"{item['entity']} {item['attribute']}={item['value']}" for item in values
+        )
+        if values
+        else empty
+    )
+    confidence = (
+        round(sum(c.confidence for c in matches) / len(matches), 2) if matches else 0.0
+    )
+    return {
+        "id": question_id,
+        "origin": origin,
+        "question": question,
+        "answer": answer,
+        "facts": values,
+        "confidence": confidence,
+        "supported": bool(matches) and len(supported) == len(matches),
+        "needs_human_review": not matches
+        or any(c.needs_human_review for c in matches)
+        or len(supported) != len(matches),
+        "claim_ids": [c.id for c in matches],
+        "evidence_refs": list(
+            dict.fromkeys(ref for c in supported for ref in (c.evidence_refs or []))
+        ),
+        "assumptions": [] if matches else [empty],
+        "answer_source": "template",
+    }
+
+
+def answer_custom_question(
+    db: Session,
+    assessment_id: str,
+    *,
+    question_id: str,
+    question: str,
+    origin: str,
+    claims: list[Claim],
+    retriever: Retriever | None = None,
+) -> dict[str, Any]:
+    matches = match_claims_to_question(question, claims)
+    payload = _answer(
+        question_id,
+        question,
+        matches,
+        lambda _c: True,
+        EMPTY_CUSTOM,
+        origin=origin,
+    )
+    retrieved_ids: list[str] = []
+    retrieved_quotes: dict[str, str] = {}
+    if retriever is not None:
+        try:
+            chunks = retriever.retrieve(db, assessment_id, question, top_k=6)
+        except Exception:
+            chunks = []
+        for chunk in chunks:
+            retrieved_ids.append(chunk.id)
+            retrieved_quotes[chunk.id] = (chunk.text or "")[:240]
+    payload["evidence_refs"] = list(
+        dict.fromkeys([*payload["evidence_refs"], *retrieved_ids])
+    )
+    if not matches and retrieved_ids:
+        quotes = [retrieved_quotes[cid] for cid in retrieved_ids if retrieved_quotes.get(cid)]
+        payload["answer"] = " ".join(quotes)[:500] if quotes else EMPTY_CUSTOM
+        payload["supported"] = bool(quotes)
+        payload["needs_human_review"] = not quotes
+        payload["assumptions"] = [] if quotes else [EMPTY_CUSTOM]
+        payload["confidence"] = 0.55 if quotes else 0.0
+    payload["_retrieved_quotes"] = retrieved_quotes
+    return payload
+
+
+def _attach_evidence(
+    db: Session, answers: list[dict[str, Any]], claims: list[Claim]
+) -> None:
+    quote_by_ref = {
+        ref: claim.evidence_quote
+        for claim in claims
+        for ref in (claim.evidence_refs or [])
+        if claim.evidence_quote
+    }
+    for answer in answers:
+        quote_by_ref.update(answer.pop("_retrieved_quotes", {}) or {})
+    evidence_by_chunk = resolve_evidence_map(
+        db,
+        [ref for answer in answers for ref in answer["evidence_refs"]],
+    )
+    for answer in answers:
+        answer["evidence"] = [
+            {
+                **evidence_by_chunk[ref],
+                "quote": quote_by_ref.get(ref),
+            }
+            for ref in answer["evidence_refs"]
+            if ref in evidence_by_chunk
+        ]
+
+
+def _standard_answers(
+    claims: list[Claim], edges: list[DependencyEdge]
+) -> list[dict[str, Any]]:
+    answers = [
+        _answer(
+            "estate_inventory",
+            "What applications, servers, and databases are in scope?",
+            claims,
+            lambda c: c.attribute == "name"
+            and c.entity_type in {"application", "server", "database"},
+            "The uploaded evidence does not provide a complete estate inventory.",
+        ),
+        _answer(
+            "dependencies",
+            "What application and infrastructure dependencies affect migration sequencing?",
+            claims,
+            lambda c: c.attribute in {"dependency", "integration", "interface"},
+            "No claim-level dependency facts were found; consult the dependency graph.",
+        ),
+        _answer(
+            "platform_compatibility",
+            "Which operating systems, runtimes, and platforms require compatibility review?",
+            claims,
+            lambda c: c.attribute in {"os", "runtime", "framework", "architecture"},
+            "Platform compatibility evidence is incomplete.",
+        ),
+        _answer(
+            "service_levels",
+            "What availability, performance, recovery, and scale requirements apply?",
+            claims,
+            lambda c: c.attribute
+            in {"sla", "availability", "latency", "rto", "rpo", "scalability"},
+            "Service-level and capacity requirements are incomplete.",
+        ),
+        _answer(
+            "security_compliance",
+            "What security, compliance, encryption, and residency constraints apply?",
+            claims,
+            lambda c: c.attribute
+            in {"compliance", "encryption", "data_residency", "security"},
+            "Security and compliance constraints are incomplete.",
+        ),
+        _answer(
+            "migration_blockers",
+            "What constraints, gaps, and technical debt may block migration?",
+            claims,
+            lambda c: c.attribute in {"constraint", "gap", "tech_debt", "blocker"},
+            "No evidenced blockers were extracted; stakeholder validation is required.",
+        ),
+    ]
+    dependency_answer = next(a for a in answers if a["id"] == "dependencies")
+    if edges:
+        dependency_answer.update(
+            {
+                "answer": "; ".join(
+                    f"{e.source_type}:{e.source_key} {e.rel_type} "
+                    f"{e.target_type}:{e.target_key}"
+                    for e in edges
+                ),
+                "facts": [
+                    {
+                        "source": f"{e.source_type}:{e.source_key}",
+                        "relationship": e.rel_type,
+                        "target": f"{e.target_type}:{e.target_key}",
+                    }
+                    for e in edges
+                ],
+                "confidence": round(sum(e.confidence for e in edges) / len(edges), 2),
+                "supported": all(bool(e.evidence_refs) for e in edges),
+                "needs_human_review": any(e.needs_human_review for e in edges)
+                or any(not e.evidence_refs for e in edges),
+                "evidence_refs": list(
+                    dict.fromkeys(ref for e in edges for ref in (e.evidence_refs or []))
+                ),
+                "assumptions": [],
+                "answer_source": "template",
+            }
+        )
+    return answers
+
+
+def build_assessment_answers(
+    db: Session,
+    assessment_id: str,
+    *,
+    prose: GroundedProse | None = None,
+    retriever: Retriever | None = None,
+) -> dict[str, Any]:
+    claims = _selected_claims(db, assessment_id)
+    edges = (
+        db.query(DependencyEdge)
+        .filter(DependencyEdge.assessment_id == assessment_id)
+        .all()
+    )
+    answers = _standard_answers(claims, edges)
+    custom_rows = (
+        db.query(EngagementQuestion)
+        .filter(EngagementQuestion.assessment_id == assessment_id)
+        .order_by(EngagementQuestion.created_at.asc())
+        .all()
+    )
+    for row in custom_rows:
+        answers.append(
+            answer_custom_question(
+                db,
+                assessment_id,
+                question_id=row.id,
+                question=row.question,
+                origin=row.origin.value,
+                claims=claims,
+                retriever=retriever,
+            )
+        )
+    _attach_evidence(db, answers, claims)
+    (prose or get_grounded_prose()).rewrite_question_answers(answers)
+    return {
+        "question_set": QUESTION_SET_VERSION,
+        "answers": answers,
+        "complete": all(a["supported"] for a in answers),
+        "review_required": any(a["needs_human_review"] for a in answers),
+    }
+
+
+def persist_ad_hoc_question(db: Session, assessment_id: str, question: str) -> EngagementQuestion:
+    text = (question or "").strip()
+    if not text:
+        raise ValueError("question is required")
+    if len(text) > ASK_MAX_CHARS:
+        raise ValueError(f"question must be at most {ASK_MAX_CHARS} characters")
+    key = normalize_question_key(text)
+    if len(key) < 8:
+        raise ValueError("question is too short")
+    existing = (
+        db.query(EngagementQuestion)
+        .filter(
+            EngagementQuestion.assessment_id == assessment_id,
+            EngagementQuestion.question_key == key,
+        )
+        .one_or_none()
+    )
+    if existing:
+        return existing
+    row = EngagementQuestion(
+        assessment_id=assessment_id,
+        origin=QuestionOrigin.ad_hoc,
+        question=text if text.endswith("?") else f"{text}?",
+        question_key=key,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def plan_dynamic_questions(db: Session, assessment_id: str) -> list[EngagementQuestion]:
+    """Generate estate-specific supplementary questions (QuestionPlanner) and persist
+    them as `origin=dynamic`, deduped by `question_key` exactly like uploaded/ad-hoc
+    questions. The base question set (`_standard_answers`) is untouched — comparability
+    across assessments is preserved; these are additive and tagged distinctly."""
+    settings = get_settings()
+    if not settings.question_planner_enabled:
+        return []
+
+    from app.services.providers import get_question_planner
+    from app.services.question_planning import build_inventory_summary
+
+    summary = build_inventory_summary(db, assessment_id)
+    proposed = get_question_planner().plan(summary)[: settings.question_planner_max_questions]
+    if not proposed:
+        return []
+
+    existing = {
+        row.question_key
+        for row in db.query(EngagementQuestion)
+        .filter(EngagementQuestion.assessment_id == assessment_id)
+        .all()
+    }
+    rows: list[EngagementQuestion] = []
+    for planned in proposed:
+        text = (planned.question or "").strip()
+        if not text:
+            continue
+        question_text = text if text.endswith("?") else f"{text}?"
+        key = normalize_question_key(question_text)
+        if len(key) < 8 or key in existing:
+            continue
+        existing.add(key)
+        row = EngagementQuestion(
+            assessment_id=assessment_id,
+            origin=QuestionOrigin.dynamic,
+            question=question_text,
+            question_key=key,
+        )
+        db.add(row)
+        rows.append(row)
+    db.commit()
+    return rows

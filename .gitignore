@@ -1,0 +1,13 @@
+node_modules/
+.next/
+dist/
+__pycache__/
+*.pyc
+.venv/
+venv/
+data/
+.env
+*.db
+code_dump.txt
+.DS_Store
+apps/web/.env.local

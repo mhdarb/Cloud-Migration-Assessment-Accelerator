@@ -1,0 +1,27 @@
+{
+  "version": "2026-08-demo",
+  "currency": "USD",
+  "region": "eastus",
+  "vms": [
+    {"name": "Standard_B2s", "family": "burstable", "vcpus": 2, "memory_gb": 4, "architectures": ["x64"], "hourly": 0.0416},
+    {"name": "Standard_B4ms", "family": "burstable", "vcpus": 4, "memory_gb": 16, "architectures": ["x64"], "hourly": 0.166},
+    {"name": "Standard_D2s_v5", "family": "general", "vcpus": 2, "memory_gb": 8, "architectures": ["x64"], "hourly": 0.096},
+    {"name": "Standard_D4s_v5", "family": "general", "vcpus": 4, "memory_gb": 16, "architectures": ["x64"], "hourly": 0.192},
+    {"name": "Standard_D8s_v5", "family": "general", "vcpus": 8, "memory_gb": 32, "architectures": ["x64"], "hourly": 0.384},
+    {"name": "Standard_D16s_v5", "family": "general", "vcpus": 16, "memory_gb": 64, "architectures": ["x64"], "hourly": 0.768},
+    {"name": "Standard_E4s_v5", "family": "memory", "vcpus": 4, "memory_gb": 32, "architectures": ["x64"], "hourly": 0.252},
+    {"name": "Standard_E8s_v5", "family": "memory", "vcpus": 8, "memory_gb": 64, "architectures": ["x64"], "hourly": 0.504},
+    {"name": "Standard_E16s_v5", "family": "memory", "vcpus": 16, "memory_gb": 128, "architectures": ["x64"], "hourly": 1.008}
+  ],
+  "disks": [
+    {"name": "P10", "type": "Premium SSD", "capacity_gb": 128, "iops": 500, "throughput_mbps": 100, "monthly": 19.71},
+    {"name": "P15", "type": "Premium SSD", "capacity_gb": 256, "iops": 1100, "throughput_mbps": 125, "monthly": 38.02},
+    {"name": "P20", "type": "Premium SSD", "capacity_gb": 512, "iops": 2300, "throughput_mbps": 150, "monthly": 73.22},
+    {"name": "P30", "type": "Premium SSD", "capacity_gb": 1024, "iops": 5000, "throughput_mbps": 200, "monthly": 135.17},
+    {"name": "P40", "type": "Premium SSD", "capacity_gb": 2048, "iops": 7500, "throughput_mbps": 250, "monthly": 259.05},
+    {"name": "E10", "type": "Standard SSD", "capacity_gb": 128, "iops": 500, "throughput_mbps": 60, "monthly": 9.60},
+    {"name": "E15", "type": "Standard SSD", "capacity_gb": 256, "iops": 500, "throughput_mbps": 60, "monthly": 19.20},
+    {"name": "E20", "type": "Standard SSD", "capacity_gb": 512, "iops": 500, "throughput_mbps": 60, "monthly": 38.40},
+    {"name": "E30", "type": "Standard SSD", "capacity_gb": 1024, "iops": 500, "throughput_mbps": 60, "monthly": 76.80}
+  ]
+}
