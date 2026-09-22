@@ -111,7 +111,7 @@ The effective resolved mode is always inspectable at runtime via `GET /health/co
 | Azure Search     | `LOCAL_EMBEDDINGS=false` + `AZURE_SEARCH_`*           | Azure AI Search only (no local FAISS)                       |
 | RAG off          | `RAG_ENABLED=false`                                   | Full-corpus heuristic scan (legacy demo path)                                       |
 
-Chunking is structure-aware and routed by document type (row-group for CMDB/inventory, Q/A-pair for questionnaires, bounded token windows per manifest file for code snapshots, token-based recursive splitting with overlap for prose) — see `app/services/chunkers.py`. `LLM_PROVIDER=openai_compatible` + `OPENAI_BASE_URL` routes chat completions through any OpenAI-API-compatible endpoint (self-hosted vLLM/Ollama, or a hosted gateway), independent of the embeddings provider.
+Chunking is structure-aware and routed by document type (row-group for CMDB/inventory, Q/A-pair for questionnaires, bounded token windows per manifest file for code snapshots, table-aware prose splitting for architecture/requirements docs) — see `app/services/chunkers.py`. Tables (whole-sheet or embedded in a DOCX, in original document order) get a shape guard against ragged rows/hidden headers, plus a computed summary chunk (sum/avg/min/max) for numeric columns so "what's the total X" queries don't depend on the LLM re-summing row-group chunks itself. `LLM_PROVIDER=openai_compatible` + `OPENAI_BASE_URL` routes chat completions through any OpenAI-API-compatible endpoint (self-hosted vLLM/Ollama, or a hosted gateway), independent of the embeddings provider.
 
 ## Dynamic architecture (models decide *what documents say*; rules decide *what we do about it*)
 

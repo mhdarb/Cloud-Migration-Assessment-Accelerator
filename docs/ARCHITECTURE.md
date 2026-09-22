@@ -148,7 +148,13 @@ Citation grounding: [`citations.py`](../apps/api/app/services/citations.py). Gua
 
 ZIP manifests, reconcile, sizing, Neo4j, report, and review stay **outside** LangGraph.
 
-Chunking is structure-aware and routed by document type (row-group for CMDB/inventory, Q/A-pair for questionnaires, bounded token windows per manifest file for code snapshots, token-based recursive splitting with overlap for prose) — see [`chunkers.py`](../apps/api/app/services/chunkers.py). Inventory, requirements, and code-snapshot chunks are additionally boosted into the mock-path retrieval set.
+Chunking is structure-aware and routed by document type (row-group for CMDB/inventory, Q/A-pair for questionnaires, bounded token windows per manifest file for code snapshots, table-aware prose splitting for architecture/requirements docs) — see [`chunkers.py`](../apps/api/app/services/chunkers.py). Inventory, requirements, and code-snapshot chunks are additionally boosted into the mock-path retrieval set.
+
+Every tabular chunk path (whole-sheet CMDB tables and tables embedded inside a DOCX) shares the same table handling:
+
+- **Shape guard** (`check_table_shape`) — before row-grouping a table, checks the data rows against the header's column count (flags a >10% mismatch) and scans for a hidden second header row (a non-numeric row sitting among otherwise-numeric rows, e.g. a re-stated header mid-sheet). A table that fails the guard falls back to plain prose chunks tagged `shape_guard_failed`/`shape_guard_reason` instead of being silently mis-row-grouped; `ingest.py` surfaces each failure as a gap in the report ("irregularly-shaped table — verify manually").
+- **Table-summary chunk** (`_build_table_summary`) — for tables with recognized numeric columns (vCPU, memory, storage, etc., via the same `_canonical_header` alias table `heuristic_extract` uses), a single computed chunk (sum/avg/min/max/count) is added alongside the row-group chunks, tagged `metadata.kind == "table_summary"`. This gives retrieval one authoritative answer for "what's the total X across all servers" instead of relying on the LLM to re-sum row-group chunks itself.
+- **DOCX embedded tables** — `parsers._parse_docx` walks the document body in true document order (`_iter_docx_blocks`, interleaving paragraphs and tables as they actually appear, since `document.paragraphs`/`document.tables` each only return one type and lose relative order) and wraps each table in `<<TABLE>>...<<END_TABLE>>` sentinel markers, keeping empty cells so column position isn't lost. `chunkers.chunk_prose_with_tables` (the default prose-path chunker) splits on those markers and routes table segments through the same shape-guard/summary/row-group logic as a whole-sheet inventory table (tagged `embedded_table: true`), while prose segments go through normal paragraph packing — both in original document order.
 
 ### Guardrail flags
 
