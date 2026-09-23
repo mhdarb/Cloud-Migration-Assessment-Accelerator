@@ -163,7 +163,7 @@ export type AssessmentAnswers = {
   question_set: string;
   answers: {
     id: string;
-    origin?: "standard" | "uploaded" | "ad_hoc";
+    origin?: "standard" | "uploaded" | "ad_hoc" | "dynamic";
     question: string;
     answer: string;
     answer_source?: string;

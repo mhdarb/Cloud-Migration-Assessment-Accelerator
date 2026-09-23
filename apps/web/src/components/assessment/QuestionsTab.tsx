@@ -45,6 +45,7 @@ export function QuestionsTab({
   const [draft, setDraft] = useState("");
   const all = answers?.answers || [];
   const standard = all.filter((a) => (a.origin || "standard") === "standard");
+  const dynamic = all.filter((a) => a.origin === "dynamic");
   const engagement = all.filter((a) => a.origin === "uploaded" || a.origin === "ad_hoc");
 
   return (
@@ -67,6 +68,21 @@ export function QuestionsTab({
           )}
         </div>
       </div>
+
+      {dynamic.length > 0 && (
+        <div>
+          <h2 className="text-xl">Estate-specific questions</h2>
+          <p className="sans mt-1 text-sm text-[var(--muted)]">
+            Generated from signals specific to this estate (e.g. unsupported operating
+            systems, sizing gaps) — not part of the standard question set.
+          </p>
+          <div className="mt-4 space-y-4">
+            {dynamic.map((answer) => (
+              <AnswerCard key={answer.id} answer={answer} />
+            ))}
+          </div>
+        </div>
+      )}
 
       <div>
         <h2 className="text-xl">Engagement questions</h2>

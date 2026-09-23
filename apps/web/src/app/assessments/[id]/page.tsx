@@ -188,7 +188,9 @@ function AssessmentDetail() {
       {tab === "graph" && (
         <GraphTab id={id} graph={graph} onError={setError} />
       )}
-      {tab === "report" && <ReportTab assessment={assessment} report={report} />}
+      {tab === "report" && (
+        <ReportTab assessment={assessment} report={report} recommendations={recommendations} />
+      )}
       {tab === "review" && (
         <ReviewTab
           assessment={assessment}

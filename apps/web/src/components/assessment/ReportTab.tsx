@@ -1,12 +1,23 @@
-import type { Assessment, Report } from "@/lib/api";
+import type { Assessment, InfrastructureRecommendation, Report } from "@/lib/api";
 import { EvidenceTrace } from "@/components/EvidenceTrace";
+
+function SummaryStat({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="rounded-lg bg-[#faf9f7] px-3 py-2">
+      <div className="text-xs uppercase text-[var(--muted)]">{label}</div>
+      <div className="text-xl font-semibold break-all">{value}</div>
+    </div>
+  );
+}
 
 export function ReportTab({
   assessment,
   report,
+  recommendations,
 }: {
   assessment: Assessment;
   report: Report | null;
+  recommendations: InfrastructureRecommendation[];
 }) {
   if (!report) {
     return (
@@ -19,8 +30,38 @@ export function ReportTab({
   const json = JSON.stringify(report.report_json, null, 2);
   const filename = `${assessment.name.replaceAll(" ", "-")}-report.json`;
 
+  const priced = recommendations.filter(
+    (r) => r.result.sku_decision !== "blocked" && r.result.pricing
+  );
+  const blockedCount = recommendations.length - priced.length;
+  const totalMonthly = priced.reduce((sum, r) => sum + (r.result.pricing?.monthly_total || 0), 0);
+  const currency = priced[0]?.result.pricing?.currency || "USD";
+  const m = report.metrics || {};
+
   return (
     <div className="space-y-4">
+      <div className="card p-5">
+        <h2 className="mb-3 text-lg">Migration summary</h2>
+        <div className="sans grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
+          <SummaryStat
+            label="Est. monthly cost"
+            value={recommendations.length ? `${currency} ${totalMonthly.toFixed(2)}` : "—"}
+          />
+          <SummaryStat label="Applications" value={m.application_count ?? 0} />
+          <SummaryStat label="Servers" value={m.server_count ?? 0} />
+          <SummaryStat label="Databases" value={m.database_count ?? 0} />
+          <SummaryStat label="Dependencies" value={m.edge_count ?? 0} />
+          <SummaryStat label="Cited claims" value={`${m.cited_claim_pct ?? 0}%`} />
+          <SummaryStat label="Open conflicts" value={m.conflict_count ?? 0} />
+          <SummaryStat label="Review queue" value={m.review_queue_count ?? 0} />
+        </div>
+        {blockedCount > 0 && (
+          <p className="sans mt-3 text-xs text-[var(--danger)]">
+            {blockedCount} server{blockedCount === 1 ? "" : "s"} blocked pending review —
+            excluded from the cost total. See Sizing.
+          </p>
+        )}
+      </div>
       <div className="card p-5">
         <h2 className="mb-2 text-lg">Readiness summary</h2>
         <p className="sans text-sm leading-relaxed">{report.readiness_summary}</p>

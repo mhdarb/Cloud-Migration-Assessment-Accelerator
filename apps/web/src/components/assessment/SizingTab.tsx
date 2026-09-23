@@ -12,14 +12,38 @@ export function SizingTab({
 }: {
   recommendations: InfrastructureRecommendation[];
 }) {
+  const priced = recommendations.filter(
+    (r) => r.result.sku_decision !== "blocked" && r.result.pricing
+  );
+  const blockedCount = recommendations.length - priced.length;
+  const totalMonthly = priced.reduce((sum, r) => sum + (r.result.pricing?.monthly_total || 0), 0);
+  const currency = priced[0]?.result.pricing?.currency || "USD";
+
   return (
     <div className="space-y-4">
       <div>
-        <h2 className="text-xl">Azure sizing &amp; cost recommendations</h2>
-        <p className="sans mt-1 text-sm text-[var(--muted)]">
-          Deterministic rules choose VM and disk options; AI may explain but never
-          changes the sizing decision.
-        </p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-xl">Azure sizing &amp; cost recommendations</h2>
+            <p className="sans mt-1 text-sm text-[var(--muted)]">
+              Deterministic rules choose VM and disk options; AI may explain but never
+              changes the sizing decision.
+            </p>
+          </div>
+          {recommendations.length > 0 && (
+            <div className="text-right">
+              <div className="text-2xl font-semibold text-[var(--accent)]">
+                {currency} {totalMonthly.toFixed(2)}/mo
+              </div>
+              <div className="sans text-xs text-[var(--muted)]">
+                Across {priced.length} server{priced.length === 1 ? "" : "s"}
+                {blockedCount > 0
+                  ? ` · ${blockedCount} blocked (excluded)`
+                  : ""}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
       {recommendations.map((recommendation) => {
         const result = recommendation.result;

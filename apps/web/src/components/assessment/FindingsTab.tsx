@@ -15,7 +15,25 @@ export function FindingsTab({
   conflicts: Conflict[];
 }) {
   const [showSuperseded, setShowSuperseded] = useState(false);
-  const visibleClaims = showSuperseded ? claims : claims.filter((c) => c.is_selected);
+  const [search, setSearch] = useState("");
+  const [sortBy, setSortBy] = useState<"entity" | "confidence-desc" | "confidence-asc">("entity");
+  const baseClaims = showSuperseded ? claims : claims.filter((c) => c.is_selected);
+  const visibleClaims = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const filtered = q
+      ? baseClaims.filter((c) =>
+          [c.entity_type, c.entity_key, c.attribute, c.override_value || c.value]
+            .join(" ")
+            .toLowerCase()
+            .includes(q)
+        )
+      : baseClaims;
+    const sorted = [...filtered];
+    if (sortBy === "confidence-desc") sorted.sort((a, b) => b.confidence - a.confidence);
+    else if (sortBy === "confidence-asc") sorted.sort((a, b) => a.confidence - b.confidence);
+    else sorted.sort((a, b) => `${a.entity_type}:${a.entity_key}`.localeCompare(`${b.entity_type}:${b.entity_key}`));
+    return sorted;
+  }, [baseClaims, search, sortBy]);
   const grouped = useMemo(() => {
     const byType: Record<string, Entity[]> = {};
     for (const entity of entities) {
@@ -62,16 +80,34 @@ export function FindingsTab({
           )}
         </div>
       </div>
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg">Claims</h2>
-        <label className="sans flex items-center gap-2 text-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-lg">Claims{claims.length ? ` (${visibleClaims.length}/${claims.length})` : ""}</h2>
+        <div className="sans flex flex-wrap items-center gap-3 text-sm">
           <input
-            type="checkbox"
-            checked={showSuperseded}
-            onChange={(e) => setShowSuperseded(e.target.checked)}
+            className="input"
+            type="search"
+            placeholder="Search entity, attribute, value…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
           />
-          Show superseded
-        </label>
+          <select
+            className="input"
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+          >
+            <option value="entity">Sort: entity</option>
+            <option value="confidence-desc">Sort: confidence (high first)</option>
+            <option value="confidence-asc">Sort: confidence (low first)</option>
+          </select>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={showSuperseded}
+              onChange={(e) => setShowSuperseded(e.target.checked)}
+            />
+            Show superseded
+          </label>
+        </div>
       </div>
       <div className="card overflow-x-auto">
         <table className="sans w-full text-left text-sm">
@@ -110,7 +146,7 @@ export function FindingsTab({
             {!visibleClaims.length && (
               <tr>
                 <td className="px-3 py-6 text-[var(--muted)]" colSpan={5}>
-                  No claims to show.
+                  {search.trim() ? "No claims match your search." : "No claims to show."}
                 </td>
               </tr>
             )}
