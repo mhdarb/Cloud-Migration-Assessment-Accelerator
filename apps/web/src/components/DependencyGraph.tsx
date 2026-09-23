@@ -25,11 +25,13 @@ export function DependencyGraph({
   highlightIds,
   centerId,
   onNodeSelect,
+  onEdgeSelect,
 }: {
   data: GraphOut;
   highlightIds?: Set<string>;
   centerId?: string | null;
   onNodeSelect?: (nodeId: string) => void;
+  onEdgeSelect?: (edge: GraphOut["edges"][number]) => void;
 }) {
   const { nodes, edges } = useMemo(() => {
     const byType: Record<string, number> = {};
@@ -96,6 +98,7 @@ export function DependencyGraph({
           strokeWidth: inBlast && centerId ? 2.5 : e.needs_human_review ? 2 : 1.5,
           strokeDasharray: isInferred ? "6 4" : undefined,
           opacity: inBlast ? 1 : 0.2,
+          cursor: "pointer",
         },
         markerEnd: { type: MarkerType.ArrowClosed, color: "#9ca3af" },
         labelStyle: { fontSize: 10, fill: "#6b7280" },
@@ -121,6 +124,10 @@ export function DependencyGraph({
         fitView
         proOptions={{ hideAttribution: true }}
         onNodeClick={(_, node) => onNodeSelect?.(node.id)}
+        onEdgeClick={(_, edge) => {
+          const original = data.edges.find((e) => e.id === edge.id);
+          if (original) onEdgeSelect?.(original);
+        }}
       >
         <Background gap={18} size={1} color="#e5e2dc" />
         <MiniMap pannable zoomable />

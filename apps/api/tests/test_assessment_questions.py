@@ -153,6 +153,37 @@ def test_unknown_ad_hoc_question_is_evidence_gap(db_session, assessment):
 def test_custom_question_can_cite_retrieved_chunk(db_session, assessment):
     doc = Document(
         assessment_id=assessment.id,
+        filename="runbook.docx",
+        storage_path="/tmp/q.docx",
+        doc_type=DocumentType.runbook,
+    )
+    db_session.add(doc)
+    db_session.flush()
+    chunk = Chunk(
+        assessment_id=assessment.id,
+        document_id=doc.id,
+        chunk_index=0,
+        text="Known gaps: network topology and firewall rules are not documented.",
+    )
+    db_session.add(chunk)
+    db_session.commit()
+    persist_ad_hoc_question(db_session, assessment.id, "What known gaps remain?")
+    result = build_assessment_answers(
+        db_session, assessment.id, retriever=KeywordRetriever(top_k=4)
+    )
+    custom = next(a for a in result["answers"] if a["origin"] == "ad_hoc")
+    assert custom["supported"] is True
+    assert custom["facts"] == []
+    assert "firewall" in custom["answer"].lower()
+
+
+def test_custom_question_does_not_cite_questionnaire_chunk(db_session, assessment):
+    """The exact scenario this exclusion targets: an `uploaded`-origin question's text
+    comes straight out of a questionnaire chunk, so retrieving that same chunk back as
+    "evidence" would just cite the question at itself. No other document answers it, so
+    the question should come back as an honest evidence gap, not a fabricated citation."""
+    doc = Document(
+        assessment_id=assessment.id,
         filename="assessment-questionnaire.docx",
         storage_path="/tmp/q.docx",
         doc_type=DocumentType.questionnaire,
@@ -172,6 +203,52 @@ def test_custom_question_can_cite_retrieved_chunk(db_session, assessment):
         db_session, assessment.id, retriever=KeywordRetriever(top_k=4)
     )
     custom = next(a for a in result["answers"] if a["origin"] == "ad_hoc")
+    assert custom["supported"] is False
+    assert custom["evidence_refs"] == []
+    assert "does not answer" in custom["answer"]
+
+
+def test_custom_question_prefers_non_questionnaire_chunk_when_both_match(db_session, assessment):
+    """A questionnaire chunk and a real source chunk both match -- the questionnaire
+    chunk must be filtered out, and the real one still gets cited."""
+    q_doc = Document(
+        assessment_id=assessment.id,
+        filename="assessment-questionnaire.docx",
+        storage_path="/tmp/q.docx",
+        doc_type=DocumentType.questionnaire,
+    )
+    arch_doc = Document(
+        assessment_id=assessment.id,
+        filename="architecture.docx",
+        storage_path="/tmp/a.docx",
+        doc_type=DocumentType.architecture,
+    )
+    db_session.add_all([q_doc, arch_doc])
+    db_session.flush()
+    db_session.add_all(
+        [
+            Chunk(
+                assessment_id=assessment.id,
+                document_id=q_doc.id,
+                chunk_index=0,
+                text="Q: Known gaps?\nA: Network topology and firewall rules are not documented.",
+            ),
+            Chunk(
+                assessment_id=assessment.id,
+                document_id=arch_doc.id,
+                chunk_index=0,
+                text="Known gaps: network topology and firewall rules are not documented.",
+            ),
+        ]
+    )
+    db_session.commit()
+    persist_ad_hoc_question(db_session, assessment.id, "What known gaps remain?")
+    result = build_assessment_answers(
+        db_session, assessment.id, retriever=KeywordRetriever(top_k=4)
+    )
+    custom = next(a for a in result["answers"] if a["origin"] == "ad_hoc")
     assert custom["supported"] is True
-    assert custom["facts"] == []
     assert "firewall" in custom["answer"].lower()
+    for ref in custom["evidence_refs"]:
+        chunk = db_session.get(Chunk, ref)
+        assert chunk.document_id != q_doc.id

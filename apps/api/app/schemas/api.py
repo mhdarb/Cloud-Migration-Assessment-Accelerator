@@ -116,6 +116,7 @@ class GraphEdge(BaseModel):
     confidence: float
     needs_human_review: bool = False
     rationale: str | None = None
+    evidence_quote: str | None = None
 
 
 class GraphOut(BaseModel):

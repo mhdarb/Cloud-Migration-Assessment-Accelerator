@@ -25,7 +25,7 @@ from app.schemas.api import (
 )
 from app.services import assessment_service as assessments
 from app.services.assessment_questions import build_assessment_answers
-from app.services.evidence import resolve_evidence, resolve_evidence_map
+from app.services.evidence import build_evidence_list, resolve_evidence, resolve_evidence_map
 from app.services.graph import build_graph, get_blast_radius
 from app.services.pipeline import run_pipeline
 from app.services.pipeline_lock import is_in_flight
@@ -49,11 +49,9 @@ def _claim_out(
 ) -> ClaimOut:
     output = ClaimOut.model_validate(claim)
     if evidence_by_chunk is not None:
-        resolved = [
-            {**evidence_by_chunk[chunk_id], "quote": claim.evidence_quote}
-            for chunk_id in (claim.evidence_refs or [])
-            if chunk_id in evidence_by_chunk
-        ]
+        resolved = build_evidence_list(
+            evidence_by_chunk, claim.evidence_refs or [], claim.evidence_quote
+        )
     else:
         resolved = resolve_evidence(
             db,

@@ -82,6 +82,7 @@ def _graph_from(snap: InventorySnapshot) -> GraphOut:
                 confidence=e.confidence,
                 needs_human_review=e.needs_human_review,
                 rationale=e.rationale,
+                evidence_quote=e.evidence_quote,
             )
         )
 

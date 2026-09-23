@@ -117,6 +117,7 @@ export type GraphOut = {
     confidence: number;
     needs_human_review: boolean;
     rationale: string | null;
+    evidence_quote: string | null;
   }[];
 };
 

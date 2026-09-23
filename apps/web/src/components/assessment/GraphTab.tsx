@@ -18,6 +18,7 @@ export function GraphTab({
   const [blastIds, setBlastIds] = useState<Set<string> | undefined>(undefined);
   const [blastSource, setBlastSource] = useState("");
   const [blastBusy, setBlastBusy] = useState(false);
+  const [selectedEdge, setSelectedEdge] = useState<GraphOut["edges"][number] | null>(null);
 
   if (!graph) {
     return (
@@ -27,6 +28,8 @@ export function GraphTab({
       </div>
     );
   }
+
+  const nodeLabelById = new Map(graph.nodes.map((n) => [n.id, n.label]));
 
   return (
     <div className="space-y-4">
@@ -104,11 +107,49 @@ export function GraphTab({
         highlightIds={blastIds}
         centerId={blastCenter || null}
         onNodeSelect={(nodeId) => setBlastCenter(nodeId)}
+        onEdgeSelect={(edge) => setSelectedEdge(edge)}
       />
+      {selectedEdge && (
+        <div className="card p-4 sans text-sm">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="font-semibold">
+                {nodeLabelById.get(selectedEdge.source) || selectedEdge.source}
+                {" → "}
+                {nodeLabelById.get(selectedEdge.target) || selectedEdge.target}
+              </div>
+              <div className="mt-1 text-xs text-[var(--muted)]">
+                {selectedEdge.relationship.replaceAll("_", " ")} ·{" "}
+                {Math.round(selectedEdge.confidence * 100)}% confidence
+                {selectedEdge.needs_human_review ? " · needs review" : ""}
+              </div>
+            </div>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => setSelectedEdge(null)}
+            >
+              Close
+            </button>
+          </div>
+          {selectedEdge.evidence_quote ? (
+            <blockquote className="mt-3 border-l-2 border-[var(--border)] pl-2 text-[var(--muted)]">
+              “{selectedEdge.evidence_quote}”
+            </blockquote>
+          ) : selectedEdge.rationale ? (
+            <p className="mt-3 text-xs text-[var(--muted)]">
+              Inferred, not extracted: {selectedEdge.rationale}
+            </p>
+          ) : (
+            <p className="mt-3 text-xs text-[var(--muted)]">No citation recorded.</p>
+          )}
+        </div>
+      )}
       <p className="sans text-xs text-[var(--muted)]">
-        Click a node or choose one above to inspect migration blast radius. Border weight
-        reflects each component&apos;s centrality — how much of the estate touches it — and
-        dashed edges are inferred relationships flagged for review, not extracted facts.
+        Click a node or choose one above to inspect migration blast radius; click an edge
+        to see why it was extracted. Border weight reflects each component&apos;s
+        centrality — how much of the estate touches it — and dashed edges are inferred
+        relationships flagged for review, not extracted facts.
       </p>
     </div>
   );

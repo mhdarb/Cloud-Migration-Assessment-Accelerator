@@ -7,8 +7,19 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.models.entities import Claim, DependencyEdge, EngagementQuestion, QuestionOrigin
-from app.services.evidence import resolve_evidence_map
+from app.models.entities import (
+    Claim,
+    DependencyEdge,
+    Document,
+    DocumentType,
+    EngagementQuestion,
+    QuestionOrigin,
+)
+from app.services.evidence import (
+    grounded_quote_for_chunk,
+    public_evidence_fields,
+    resolve_evidence_map,
+)
 from app.services.llm_reasoning import GroundedProse, get_grounded_prose
 from app.services.ports import Retriever
 from app.services.questionnaire_extract import normalize_question_key
@@ -148,6 +159,20 @@ def _answer(
     }
 
 
+def _questionnaire_document_ids(db: Session, assessment_id: str) -> frozenset[str]:
+    """A question's evidence must come from an actual source document, not from the
+    questionnaire it may have been extracted from -- otherwise an `uploaded`-origin
+    question (its text pulled straight out of a questionnaire chunk via
+    `questionnaire_extract.parse_questionnaire_questions`) can end up citing that very
+    same chunk as its own "evidence" once retrieved back, which is circular, not grounding."""
+    return frozenset(
+        doc_id
+        for (doc_id,) in db.query(Document.id)
+        .filter(Document.assessment_id == assessment_id, Document.doc_type == DocumentType.questionnaire)
+        .all()
+    )
+
+
 def answer_custom_question(
     db: Session,
     assessment_id: str,
@@ -157,6 +182,7 @@ def answer_custom_question(
     origin: str,
     claims: list[Claim],
     retriever: Retriever | None = None,
+    questionnaire_document_ids: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     matches = match_claims_to_question(question, claims)
     payload = _answer(
@@ -171,9 +197,13 @@ def answer_custom_question(
     retrieved_quotes: dict[str, str] = {}
     if retriever is not None:
         try:
-            chunks = retriever.retrieve(db, assessment_id, question, top_k=6)
+            # Over-fetch and filter rather than requesting exactly 6 -- excluding
+            # questionnaire chunks after the fact shouldn't leave fewer than 6 real
+            # candidates just because a questionnaire chunk happened to rank near the top.
+            candidates = retriever.retrieve(db, assessment_id, question, top_k=12)
         except Exception:
-            chunks = []
+            candidates = []
+        chunks = [c for c in candidates if c.document_id not in questionnaire_document_ids][:6]
         for chunk in chunks:
             retrieved_ids.append(chunk.id)
             retrieved_quotes[chunk.id] = (chunk.text or "")[:240]
@@ -194,22 +224,33 @@ def answer_custom_question(
 def _attach_evidence(
     db: Session, answers: list[dict[str, Any]], claims: list[Claim]
 ) -> None:
-    quote_by_ref = {
-        ref: claim.evidence_quote
-        for claim in claims
-        for ref in (claim.evidence_refs or [])
-        if claim.evidence_quote
-    }
-    for answer in answers:
-        quote_by_ref.update(answer.pop("_retrieved_quotes", {}) or {})
     evidence_by_chunk = resolve_evidence_map(
         db,
         [ref for answer in answers for ref in answer["evidence_refs"]],
     )
+    # A ref can only be attributed a claim's quote when it's actually grounded in that
+    # specific chunk's text (see `evidence.grounded_quote_for_chunk`) -- a claim's
+    # evidence_refs can span multiple chunks, and citations.py doesn't guarantee the quote
+    # appears verbatim in every one of them.
+    quote_by_ref: dict[str, str] = {}
+    for claim in claims:
+        if not claim.evidence_quote:
+            continue
+        for ref in claim.evidence_refs or []:
+            entry = evidence_by_chunk.get(ref)
+            if not entry:
+                continue
+            grounded = grounded_quote_for_chunk(entry, claim.evidence_quote)
+            if grounded:
+                quote_by_ref[ref] = grounded
+    for answer in answers:
+        # Quotes retrieved directly from a chunk's own text (the RAG fallback in
+        # `answer_custom_question`) are correct by construction -- no grounding check needed.
+        quote_by_ref.update(answer.pop("_retrieved_quotes", {}) or {})
     for answer in answers:
         answer["evidence"] = [
             {
-                **evidence_by_chunk[ref],
+                **public_evidence_fields(evidence_by_chunk[ref]),
                 "quote": quote_by_ref.get(ref),
             }
             for ref in answer["evidence_refs"]
@@ -318,6 +359,7 @@ def build_assessment_answers(
         .order_by(EngagementQuestion.created_at.asc())
         .all()
     )
+    questionnaire_document_ids = _questionnaire_document_ids(db, assessment_id)
     for row in custom_rows:
         answers.append(
             answer_custom_question(
@@ -328,6 +370,7 @@ def build_assessment_answers(
                 origin=row.origin.value,
                 claims=claims,
                 retriever=retriever,
+                questionnaire_document_ids=questionnaire_document_ids,
             )
         )
     _attach_evidence(db, answers, claims)

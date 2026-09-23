@@ -143,6 +143,7 @@ def persist_extraction(
             rel_type=dep.relationship,
             confidence=dep.confidence,
             evidence_refs=dep.chunk_ids,
+            evidence_quote=dep.evidence_quote,
             needs_human_review=dep.confidence < settings.confidence_review_threshold,
         )
         db.add(edge)

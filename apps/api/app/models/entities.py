@@ -245,6 +245,7 @@ class DependencyEdge(Base):
     rel_type: Mapped[str] = mapped_column(String(128), default="depends_on")
     confidence: Mapped[float] = mapped_column(Float, default=0.5)
     evidence_refs: Mapped[list] = mapped_column(JSON, default=list)
+    evidence_quote: Mapped[str | None] = mapped_column(Text, nullable=True)
     needs_human_review: Mapped[bool] = mapped_column(Boolean, default=False)
     rationale: Mapped[str | None] = mapped_column(String(500), nullable=True)
 

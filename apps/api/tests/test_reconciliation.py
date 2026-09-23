@@ -1,5 +1,5 @@
-from app.models.entities import Document, DocumentType
-from app.schemas.api import ExtractedClaim, ExtractionResult
+from app.models.entities import DependencyEdge, Document, DocumentType
+from app.schemas.api import ExtractedClaim, ExtractedDependency, ExtractionResult
 from app.services.reconciliation import persist_extraction
 
 
@@ -86,3 +86,32 @@ def test_precedence_selects_inventory_over_architecture(db_session, assessment):
         db_session.query(Conflict).filter(Conflict.assessment_id == assessment.id).all()
     )
     assert len(conflicts) == 1
+
+
+def test_persist_extraction_stores_dependency_evidence_quote(db_session, assessment):
+    """DependencyEdge previously had no evidence_quote column at all -- the extractor
+    produced one and citations.py validated it, but reconciliation.py silently dropped it
+    on persist, leaving every dependency in the graph with a confidence score but no actual
+    citation text explaining why it was extracted."""
+    result = ExtractionResult(
+        dependencies=[
+            ExtractedDependency(
+                source_type="application",
+                source_key="customer-portal",
+                target_type="application",
+                target_key="billing-service",
+                relationship="depends_on",
+                confidence=0.9,
+                evidence_quote="Customer Portal depends on Billing Service.",
+                chunk_ids=["c1"],
+            )
+        ],
+    )
+    persist_extraction(db_session, assessment.id, result)
+    edge = (
+        db_session.query(DependencyEdge)
+        .filter(DependencyEdge.assessment_id == assessment.id)
+        .one()
+    )
+    assert edge.evidence_quote == "Customer Portal depends on Billing Service."
+    assert edge.evidence_refs == ["c1"]

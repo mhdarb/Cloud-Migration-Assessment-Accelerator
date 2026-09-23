@@ -51,6 +51,7 @@ def _seed_estate(db_session, assessment):
             target_key="billing-service",
             rel_type="depends_on",
             confidence=0.9,
+            evidence_quote="Customer Portal depends on Billing Service.",
         ),
         DependencyEdge(
             assessment_id=assessment.id,
@@ -120,3 +121,19 @@ def test_get_blast_radius_unknown_node_returns_no_nodes(db_session, assessment):
     _seed_estate(db_session, assessment)
     result = get_blast_radius(db_session, assessment.id, "application:nonexistent", depth=2)
     assert [n.id for n in result.nodes] == []
+
+
+def test_build_graph_surfaces_dependency_evidence_quote(db_session, assessment):
+    """DependencyEdge.evidence_quote (previously nonexistent) must reach the API response
+    -- confidence alone doesn't tell a reviewer *why* a dependency was extracted."""
+    _seed_estate(db_session, assessment)
+    graph = build_graph(db_session, assessment.id)
+    edge = next(
+        e
+        for e in graph.edges
+        if e.source == "application:customer-portal" and e.target == "application:billing-service"
+    )
+    assert edge.evidence_quote == "Customer Portal depends on Billing Service."
+    # Inferred edges (no direct evidence, only a rationale) must not be confused with this.
+    hosted_edge = next(e for e in graph.edges if e.relationship == "hosted_on")
+    assert hosted_edge.evidence_quote is None

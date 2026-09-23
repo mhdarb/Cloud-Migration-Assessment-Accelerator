@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.models.entities import Assessment, AssessmentOutput, Claim
 from app.schemas.api import ExtractionResult, ReportOut
 from app.services.assessment_questions import build_assessment_answers
-from app.services.evidence import resolve_evidence_map
+from app.services.evidence import build_evidence_list, resolve_evidence_map
 from app.services.graph import build_graph
 from app.services.inventory import load_inventory
 from app.services.llm_reasoning import GroundedProse, get_grounded_prose
@@ -26,11 +26,9 @@ def _build_evidence_appendix(db: Session, claims: list[Claim]) -> list[dict]:
             "confidence": claim.confidence,
             "quote": claim.evidence_quote,
             "chunk_ids": claim.evidence_refs,
-            "evidence": [
-                {**evidence_by_chunk[ref], "quote": claim.evidence_quote}
-                for ref in (claim.evidence_refs or [])
-                if ref in evidence_by_chunk
-            ],
+            "evidence": build_evidence_list(
+                evidence_by_chunk, claim.evidence_refs or [], claim.evidence_quote
+            ),
             "unsupported": claim.unsupported,
         }
         for claim in claims
