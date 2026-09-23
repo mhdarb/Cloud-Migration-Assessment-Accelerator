@@ -5,15 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api, AssessmentListItem, Health, llmLabel } from "@/lib/api";
 import { StatusBadge } from "@/components/StatusBadge";
-
-const TERMINAL = new Set(["completed", "failed"]);
-const IN_FLIGHT = new Set([
-  "ingesting",
-  "extracting",
-  "reconciling",
-  "building_graph",
-  "generating_report",
-]);
+import { isInFlight, isTerminal } from "@/lib/status";
 
 export default function HomePage() {
   const router = useRouter();
@@ -41,7 +33,7 @@ export default function HomePage() {
     refresh();
   }, []);
 
-  const hasRunning = items.some((item) => !TERMINAL.has(item.status));
+  const hasRunning = items.some((item) => !isTerminal(item.status));
 
   useEffect(() => {
     if (!hasRunning) return;
@@ -256,7 +248,7 @@ export default function HomePage() {
                       <button
                         type="button"
                         className="btn btn-secondary"
-                        disabled={busyId === item.id || IN_FLIGHT.has(item.status)}
+                        disabled={busyId === item.id || isInFlight(item.status)}
                         onClick={() => void deleteItem(item)}
                       >
                         Delete

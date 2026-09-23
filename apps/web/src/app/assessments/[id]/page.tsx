@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useAssessment } from "@/hooks/useAssessment";
 import { parseTab, TABS, type Tab } from "@/lib/tabs";
+import { isInFlight } from "@/lib/status";
 import { StatusBadge } from "@/components/StatusBadge";
 import { OverviewTab } from "@/components/assessment/OverviewTab";
 import { QuestionsTab } from "@/components/assessment/QuestionsTab";
@@ -120,16 +121,7 @@ function AssessmentDetail() {
           </button>
           <button
             className="btn btn-secondary"
-            disabled={
-              busy ||
-              [
-                "ingesting",
-                "extracting",
-                "reconciling",
-                "building_graph",
-                "generating_report",
-              ].includes(assessment.status)
-            }
+            disabled={busy || isInFlight(assessment.status)}
             onClick={() => {
               if (!window.confirm(`Delete “${assessment.name}”? This cannot be undone.`)) {
                 return;

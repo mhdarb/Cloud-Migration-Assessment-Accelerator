@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -200,7 +201,14 @@ def _ingest_code_snapshot(
             )
             items: list[tuple[str, str]] = []
             for piece in pieces:
+                # Assign the id ourselves instead of relying on the column's default
+                # (evaluated at flush/INSERT time) -- lets every chunk in this manifest
+                # file batch into one `db.add_all` instead of a flush per chunk, which
+                # for a code snapshot with many manifest files means many fewer
+                # synchronous round-trips to the database.
+                chunk_id = str(uuid.uuid4())
                 chunk = Chunk(
+                    id=chunk_id,
                     assessment_id=assessment_id,
                     document_id=doc.id,
                     chunk_index=chunk_index,
@@ -211,8 +219,7 @@ def _ingest_code_snapshot(
                     metadata_json=piece.metadata or None,
                 )
                 db.add(chunk)
-                db.flush()
-                items.append((chunk.id, piece.text))
+                items.append((chunk_id, piece.text))
                 chunk_index += 1
             path_to_chunk[mf.relative_path] = items
         result.manifest_files_parsed += len(scan.files)

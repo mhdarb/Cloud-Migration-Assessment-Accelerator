@@ -18,7 +18,7 @@ function ReviewCard({
     action: string,
     override_value?: string,
     notes?: string
-  ) => Promise<void>;
+  ) => Promise<boolean>;
 }) {
   const [overrideValue, setOverrideValue] = useState(claim.override_value || claim.value);
   const [notes, setNotes] = useState(claim.review_notes || "");
@@ -109,7 +109,7 @@ export function ReviewTab({
     action: string,
     override_value?: string,
     notes?: string
-  ) => Promise<void>;
+  ) => Promise<boolean>;
   onAddFollowUp: (note: string) => Promise<boolean>;
 }) {
   const [followUpNote, setFollowUpNote] = useState("");

@@ -19,6 +19,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return JSON.parse(text) as T;
 }
 
+function requestJson<T>(
+  path: string,
+  method: "POST" | "PATCH",
+  body: unknown
+): Promise<T> {
+  return request<T>(path, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
 export type AssessmentListItem = {
   id: string;
   name: string;
@@ -249,11 +261,7 @@ export const api = {
   listAssessments: () => request<AssessmentListItem[]>("/assessments"),
   getAssessment: (id: string) => request<Assessment>(`/assessments/${id}`),
   updateAssessment: (id: string, name: string) =>
-    request<Assessment>(`/assessments/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name }),
-    }),
+    requestJson<Assessment>(`/assessments/${id}`, "PATCH", { name }),
   deleteAssessment: (id: string) =>
     request<void>(`/assessments/${id}`, { method: "DELETE" }),
   createAssessment: async (name: string, files: File[]) => {
@@ -288,10 +296,10 @@ export const api = {
     override_value?: string,
     notes?: string
   ) =>
-    request<Claim>(`/assessments/${assessmentId}/claims/${claimId}/review`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action, override_value, notes }),
+    requestJson<Claim>(`/assessments/${assessmentId}/claims/${claimId}/review`, "POST", {
+      action,
+      override_value,
+      notes,
     }),
   entities: (id: string) => request<Entity[]>(`/assessments/${id}/entities`),
   graph: (id: string) => request<GraphOut>(`/assessments/${id}/graph`),
@@ -303,10 +311,8 @@ export const api = {
   assessmentQuestions: (id: string) =>
     request<AssessmentAnswers>(`/assessments/${id}/assessment-questions`),
   askQuestion: (id: string, question: string) =>
-    request<AssessmentAnswers>(`/assessments/${id}/assessment-questions/ask`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question }),
+    requestJson<AssessmentAnswers>(`/assessments/${id}/assessment-questions/ask`, "POST", {
+      question,
     }),
   recommendations: (id: string) =>
     request<InfrastructureRecommendation[]>(`/assessments/${id}/recommendations`),
@@ -316,9 +322,5 @@ export const api = {
       method: "POST",
     }),
   addFollowUp: (id: string, note: string, tags?: string[]) =>
-    request<Assessment>(`/assessments/${id}/follow-up`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ note, tags }),
-    }),
+    requestJson<Assessment>(`/assessments/${id}/follow-up`, "POST", { note, tags }),
 };

@@ -12,8 +12,7 @@ import {
   InfrastructureRecommendation,
   Report,
 } from "@/lib/api";
-
-const TERMINAL = new Set(["completed", "failed"]);
+import { isTerminal } from "@/lib/status";
 
 export function useAssessment(id: string) {
   const [assessment, setAssessment] = useState<Assessment | null>(null);
@@ -65,10 +64,10 @@ export function useAssessment(id: string) {
       setReport(await api.report(id));
     } catch {
       setReport(null);
-      if (TERMINAL.has(status)) failed.push("report");
+      if (isTerminal(status)) failed.push("report");
     }
 
-    if (failed.length && TERMINAL.has(status)) {
+    if (failed.length && isTerminal(status)) {
       setError(`Could not load ${failed.join(", ")}`);
     }
   }, [id]);
@@ -84,7 +83,7 @@ export function useAssessment(id: string) {
         setError(null);
         await loadDetails(a.status);
         if (cancelled) return;
-        if (TERMINAL.has(a.status)) return;
+        if (isTerminal(a.status)) return;
         delay = Math.min(Math.round(delay * 1.4), 12000);
         timeout = setTimeout(tick, delay);
       } catch (e) {
@@ -103,141 +102,92 @@ export function useAssessment(id: string) {
 
   const restartPolling = () => setPollGeneration((n) => n + 1);
 
-  const onReview = async (
-    claimId: string,
-    action: string,
-    override_value?: string,
-    notes?: string
-  ) => {
+  // Every action below needs the same busy/error bracketing -- run it, report failure via
+  // `error`, always clear `busy` -- so that's centralized here once instead of repeated
+  // per action. Returns whether `fn` succeeded, for actions whose caller needs to know
+  // (e.g. clear a draft field only on success).
+  const runAction = useCallback(async (fn: () => Promise<void>, fallbackMessage: string) => {
     setBusy(true);
     setError(null);
     try {
-      await api.reviewClaim(id, claimId, action, override_value, notes);
-      await loadDetails("completed");
-      await loadCore();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Review failed");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const onRerun = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      await api.run(id);
-      restartPolling();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Rerun failed");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const onCompleteReview = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      setAssessment(await api.completeReview(id));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Complete review failed");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const onAddFollowUp = async (note: string) => {
-    if (!note.trim()) return false;
-    setBusy(true);
-    setError(null);
-    try {
-      setAssessment(await api.addFollowUp(id, note.trim()));
+      await fn();
       return true;
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Follow-up note failed");
+      setError(e instanceof Error ? e.message : fallbackMessage);
       return false;
     } finally {
       setBusy(false);
     }
+  }, []);
+
+  const onReview = (
+    claimId: string,
+    action: string,
+    override_value?: string,
+    notes?: string
+  ) =>
+    runAction(async () => {
+      await api.reviewClaim(id, claimId, action, override_value, notes);
+      await loadDetails("completed");
+      await loadCore();
+    }, "Review failed");
+
+  const onRerun = () =>
+    runAction(async () => {
+      await api.run(id);
+      restartPolling();
+    }, "Rerun failed");
+
+  const onCompleteReview = () =>
+    runAction(async () => {
+      setAssessment(await api.completeReview(id));
+    }, "Complete review failed");
+
+  const onAddFollowUp = (note: string) => {
+    if (!note.trim()) return Promise.resolve(false);
+    return runAction(async () => {
+      setAssessment(await api.addFollowUp(id, note.trim()));
+    }, "Follow-up note failed");
   };
 
-  const onAskQuestion = async (question: string) => {
-    if (!question.trim()) return false;
-    setBusy(true);
-    setError(null);
-    try {
+  const onAskQuestion = (question: string) => {
+    if (!question.trim()) return Promise.resolve(false);
+    return runAction(async () => {
       setAnswers(await api.askQuestion(id, question.trim()));
       try {
         setReport(await api.report(id));
       } catch {
         /* report may not exist yet */
       }
-      return true;
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Ask failed");
-      return false;
-    } finally {
-      setBusy(false);
-    }
+    }, "Ask failed");
   };
 
-  const onRename = async (name: string) => {
+  const onRename = (name: string) => {
     const next = name.trim();
-    if (!next) return false;
-    setBusy(true);
-    setError(null);
-    try {
+    if (!next) return Promise.resolve(false);
+    return runAction(async () => {
       setAssessment(await api.updateAssessment(id, next));
-      return true;
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Rename failed");
-      return false;
-    } finally {
-      setBusy(false);
-    }
+    }, "Rename failed");
   };
 
-  const onDeleteAssessment = async () => {
-    setBusy(true);
-    setError(null);
-    try {
+  const onDeleteAssessment = () =>
+    runAction(async () => {
       await api.deleteAssessment(id);
-      return true;
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Delete failed");
-      return false;
-    } finally {
-      setBusy(false);
-    }
-  };
+    }, "Delete failed");
 
-  const onAddDocuments = async (files: File[]) => {
-    if (!files.length) return;
-    setBusy(true);
-    setError(null);
-    try {
+  const onAddDocuments = (files: File[]) => {
+    if (!files.length) return Promise.resolve(false);
+    return runAction(async () => {
       setAssessment(await api.uploadDocuments(id, files));
       restartPolling();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Upload failed");
-    } finally {
-      setBusy(false);
-    }
+    }, "Upload failed");
   };
 
-  const onRemoveDocument = async (documentId: string) => {
-    setBusy(true);
-    setError(null);
-    try {
+  const onRemoveDocument = (documentId: string) =>
+    runAction(async () => {
       setAssessment(await api.deleteDocument(id, documentId));
       restartPolling();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Remove document failed");
-    } finally {
-      setBusy(false);
-    }
-  };
+    }, "Remove document failed");
 
   return {
     assessment,

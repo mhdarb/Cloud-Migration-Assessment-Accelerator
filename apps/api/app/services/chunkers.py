@@ -124,6 +124,13 @@ def _pack_blocks(
     return chunks
 
 
+def _split_paragraphs(text: str) -> list[str]:
+    """Split on blank-line paragraph boundaries, dropping empty blocks. Shared by every
+    chunker that packs prose into token windows paragraph-first."""
+    blocks = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
+    return blocks or [text]
+
+
 def chunk_prose_recursive(
     pages: list[ParsedPage], size_tokens: int = 600, overlap_tokens: int = 80
 ) -> list[ChunkPiece]:
@@ -134,7 +141,7 @@ def chunk_prose_recursive(
         text = (page.text or "").strip()
         if not text:
             continue
-        blocks = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()] or [text]
+        blocks = _split_paragraphs(text)
         offset = 0
         for chunk_text in _pack_blocks(blocks, size_tokens, overlap_tokens, enc):
             pieces.append(
@@ -434,9 +441,7 @@ def chunk_prose_with_tables(
         offset = 0
         for segment in _split_prose_and_tables(text):
             if isinstance(segment, _ProseSegment):
-                blocks = [b.strip() for b in re.split(r"\n\s*\n", segment.text) if b.strip()] or [
-                    segment.text
-                ]
+                blocks = _split_paragraphs(segment.text)
                 for chunk_text in _pack_blocks(blocks, size_tokens, overlap_tokens, enc):
                     pieces.append(
                         ChunkPiece(
@@ -517,7 +522,7 @@ def chunk_code_manifest_file(
     """Split one manifest file's text into bounded pieces instead of a single unbounded chunk."""
     enc = _get_encoding()
     body = text or ""
-    blocks = [b.strip() for b in re.split(r"\n\s*\n", body) if b.strip()] or [body]
+    blocks = _split_paragraphs(body)
     packed = _pack_blocks(blocks, size_tokens, overlap_tokens, enc) or [""]
     pieces: list[ChunkPiece] = []
     offset = 0
