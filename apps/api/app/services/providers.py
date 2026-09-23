@@ -17,6 +17,7 @@ from app.services.ports import (
     GraphSink,
     LlmExtractor,
     QuestionPlanner,
+    Reranker,
     Retriever,
     VectorIndex,
 )
@@ -25,7 +26,13 @@ from app.services.question_planning import (
     LlmQuestionPlanner,
     NoOpQuestionPlanner,
 )
-from app.services.search import BM25Retriever, KeywordRetriever, MergingRetriever
+from app.services.rerankers import CrossEncoderReranker, LlmReranker, NoOpReranker
+from app.services.search import (
+    BM25Retriever,
+    KeywordRetriever,
+    MergingRetriever,
+    RerankingRetriever,
+)
 from app.services.vector_indexes import AzureSearchIndex, FaissVectorIndex
 
 
@@ -63,17 +70,34 @@ def get_keyword_retriever(top_k: int) -> KeywordRetriever | BM25Retriever:
     return BM25Retriever(top_k=top_k)
 
 
+def get_reranker() -> Reranker:
+    settings = get_settings()
+    if settings.reranker == "llm":
+        if settings.chat_llm_configured and not settings.use_mock_llm:
+            return LlmReranker(get_chat_completer(), fallback=CrossEncoderReranker(settings.reranker_model))
+        # No usable chat LLM -- fall back to the deterministic strategy rather than off,
+        # matching get_doc_classifier()/get_question_planner()'s "llm degrades to the best
+        # available non-LLM strategy" convention.
+        return CrossEncoderReranker(settings.reranker_model)
+    if settings.reranker == "cross_encoder":
+        return CrossEncoderReranker(settings.reranker_model)
+    return NoOpReranker()
+
+
 def get_retriever(
     embedder: Embedder | None = None,
     indexes: list[VectorIndex] | None = None,
 ) -> Retriever:
     settings = get_settings()
-    return MergingRetriever(
+    base = MergingRetriever(
         embedder or get_embedder(),
         indexes if indexes is not None else get_vector_indexes(),
         get_keyword_retriever(settings.rag_top_k),
         top_k=settings.rag_top_k,
     )
+    if settings.reranker == "off":
+        return base
+    return RerankingRetriever(base, get_reranker(), candidate_pool=settings.reranker_candidate_pool)
 
 
 def get_llm_extractor(docs_by_id: dict | None = None) -> LlmExtractor:

@@ -118,6 +118,8 @@ Orchestrated in [`AssessmentPipeline._execute`](../apps/api/app/services/pipelin
 
 [`extraction.py`](../apps/api/app/services/extraction.py) `AssessmentClaimExtractor` calls [`run_extract_agent`](../apps/api/app/services/agent_extract.py). Retriever is `MergingRetriever` — hybrid BM25 + vector search fused via Reciprocal Rank Fusion — in [`search.py`](../apps/api/app/services/search.py) (falls back to a simple waterfall merge if `RETRIEVAL_HYBRID_ENABLED=false` or `rank_bm25` isn't installed).
 
+`RERANKER` (`off` default, `cross_encoder`, `llm`) optionally wraps that retriever in `RerankingRetriever` ([`search.py`](../apps/api/app/services/search.py)): the inner retriever is asked for a larger pool (`RERANKER_CANDIDATE_POOL`, default 20) instead of just `top_k`, and a `Reranker` ([`rerankers.py`](../apps/api/app/services/rerankers.py)) re-scores that pool before it's truncated — RRF optimizes for recall across BM25/vector, a reranker then optimizes precision on the result. `CrossEncoderReranker` is local/deterministic (`sentence-transformers` CrossEncoder, no chat LLM needed); `LlmReranker` asks the configured chat completer to score every candidate in one structured-output call and falls back to `CrossEncoderReranker` when no usable LLM is configured. Both degrade to passing the pre-rerank order through unchanged on any failure (model can't load, scoring errors, malformed/incomplete LLM response) — a reranker outage never breaks retrieval. Off by default so the fully-offline local profile never depends on downloading a new model at runtime.
+
 ```mermaid
 flowchart TD
   start[run_extract_agent] --> mock{use_mock_llm?}
@@ -176,7 +178,8 @@ Composition root: [`providers.py`](../apps/api/app/services/providers.py). Proto
 |------|-----------------|------|
 | `Embedder` | `SentenceTransformerEmbedder`, `AzureEmbedder` (+ `FallbackEmbedder` in lz) | Vectors |
 | `VectorIndex` | `FaissVectorIndex`, `AzureSearchIndex` | Persist / kNN |
-| `Retriever` | `MergingRetriever` (BM25 + vector, RRF-fused) | Chunks for a query |
+| `Retriever` | `MergingRetriever` (BM25 + vector, RRF-fused), `RerankingRetriever` (decorates any `Retriever`) | Chunks for a query |
+| `Reranker` | `NoOpReranker`, `CrossEncoderReranker`, `LlmReranker` | Re-score/re-order a fused candidate pool before it's truncated to `top_k` |
 | `Chunker` | `DocumentChunker` (routes by doc type) | Structure-aware chunking (see [`chunkers.py`](../apps/api/app/services/chunkers.py)) |
 | `ChatCompleter` | `OpenAICompatibleCompleter` (Azure OpenAI or any OpenAI-compatible endpoint via `LLM_PROVIDER=openai_compatible`), `DisabledChatCompleter` | Chat completions, with retry/backoff on transient errors |
 | `LlmExtractor` | `ChatLlmExtractor` (structured, per-skill schemas), `HeuristicLlmExtractor`, `EnsembleExtractor` | Query + chunks → `ExtractionResult` |

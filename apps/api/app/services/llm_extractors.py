@@ -27,11 +27,22 @@ def _neutralize_nested_tags(text: str) -> str:
 
 
 def _spotlight_chunks(chunk_payload: list[ChunkPayload]) -> str:
-    """Fence each chunk so the model can't confuse retrieved text with instructions."""
+    """Fence each chunk so the model can't confuse retrieved text with instructions.
+
+    `section_title` (set by `chunkers._annotate_with_context`) is included as a leading
+    line inside the fence — it's built only from doc-type/structural metadata, never raw
+    document content, so unlike the chunk's own text it needs no injection scanning of its
+    own. It gives the model a hint of where an isolated chunk sits (e.g. "architecture —
+    part 3 of 8") without widening what untrusted content reaches the prompt."""
     parts = []
     for item in chunk_payload:
         cid = item.get("chunk_id", "")
-        text = _neutralize_nested_tags(item.get("text", ""))
+        body_lines = []
+        section = item.get("section_title")
+        if section:
+            body_lines.append(f"[{_neutralize_nested_tags(str(section))}]")
+        body_lines.append(_neutralize_nested_tags(item.get("text", "")))
+        text = "\n".join(body_lines)
         parts.append(f'<chunk id="{cid}">\n{text}\n</chunk>')
     return "\n".join(parts)
 

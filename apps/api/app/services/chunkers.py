@@ -51,11 +51,19 @@ def _count_tokens(text: str, enc) -> int:
     return max(1, len(text) // _CHARS_PER_TOKEN_ESTIMATE)
 
 
-def _window_by_tokens(text: str, size_tokens: int, overlap_tokens: int, enc) -> list[str]:
+_SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+")
+
+
+def _split_sentences(text: str) -> list[str]:
+    parts = [s.strip() for s in _SENTENCE_BOUNDARY.split(text) if s.strip()]
+    return parts if len(parts) > 1 else [text]
+
+
+def _raw_token_window(text: str, size_tokens: int, overlap_tokens: int, enc) -> list[str]:
+    """Last-resort cut at a raw token/char offset — used only when a block has no sentence
+    boundary to split on (a single run-on sentence, or text without terminal punctuation)."""
     if enc is not None:
         ids = enc.encode(text)
-        if len(ids) <= size_tokens:
-            return [text]
         pieces: list[str] = []
         start = 0
         while start < len(ids):
@@ -67,8 +75,6 @@ def _window_by_tokens(text: str, size_tokens: int, overlap_tokens: int, enc) -> 
         return pieces
     char_size = size_tokens * _CHARS_PER_TOKEN_ESTIMATE
     char_overlap = overlap_tokens * _CHARS_PER_TOKEN_ESTIMATE
-    if len(text) <= char_size:
-        return [text]
     pieces = []
     start = 0
     while start < len(text):
@@ -80,7 +86,22 @@ def _window_by_tokens(text: str, size_tokens: int, overlap_tokens: int, enc) -> 
     return pieces
 
 
-def _pack_blocks(blocks: list[str], size_tokens: int, overlap_tokens: int, enc) -> list[str]:
+def _window_by_tokens(text: str, size_tokens: int, overlap_tokens: int, enc) -> list[str]:
+    """Split an oversized block. Tries sentence boundaries first (via `_pack_blocks`, so
+    multiple undersized sentences still get packed together rather than one-per-chunk);
+    only falls back to a raw token/char cut — which can land mid-sentence — when the block
+    has no sentence boundary to split on at all."""
+    if _count_tokens(text, enc) <= size_tokens:
+        return [text]
+    sentences = _split_sentences(text)
+    if len(sentences) > 1:
+        return _pack_blocks(sentences, size_tokens, overlap_tokens, enc, separator=" ")
+    return _raw_token_window(text, size_tokens, overlap_tokens, enc)
+
+
+def _pack_blocks(
+    blocks: list[str], size_tokens: int, overlap_tokens: int, enc, *, separator: str = "\n\n"
+) -> list[str]:
     """Greedily pack text blocks into token-bounded windows; oversized blocks get token-windowed."""
     chunks: list[str] = []
     buffer: list[str] = []
@@ -89,17 +110,17 @@ def _pack_blocks(blocks: list[str], size_tokens: int, overlap_tokens: int, enc) 
         block_tokens = _count_tokens(block, enc)
         if block_tokens > size_tokens:
             if buffer:
-                chunks.append("\n\n".join(buffer))
+                chunks.append(separator.join(buffer))
                 buffer, buffer_tokens = [], 0
             chunks.extend(_window_by_tokens(block, size_tokens, overlap_tokens, enc))
             continue
         if buffer and buffer_tokens + block_tokens > size_tokens:
-            chunks.append("\n\n".join(buffer))
+            chunks.append(separator.join(buffer))
             buffer, buffer_tokens = [], 0
         buffer.append(block)
         buffer_tokens += block_tokens
     if buffer:
-        chunks.append("\n\n".join(buffer))
+        chunks.append(separator.join(buffer))
     return chunks
 
 
@@ -236,8 +257,44 @@ def _build_table_summary(
     )
 
 
+def _group_rows_adaptively(
+    data_lines: list[str],
+    header: str,
+    title: str,
+    rows_per_chunk: int,
+    size_tokens: int,
+    enc,
+) -> list[list[str]]:
+    """Group data rows by a token budget, capped by `rows_per_chunk` rows per group —
+    not a fixed row count alone. A fixed row count either fragments a table of short rows
+    into needlessly many small chunks, or lets a table with long cell values (e.g. a
+    free-text notes column) blow well past a reasonable chunk size. `rows_per_chunk` stays
+    as an upper bound so a chunk of very short rows doesn't grow large enough to make its
+    row-range citation impractically broad."""
+    overhead = _count_tokens("\n".join(([title] if title else []) + [header]), enc)
+    budget = max(size_tokens - overhead, size_tokens // 4)
+    groups: list[list[str]] = []
+    current: list[str] = []
+    current_tokens = 0
+    for line in data_lines:
+        line_tokens = _count_tokens(line, enc)
+        if current and (len(current) >= rows_per_chunk or current_tokens + line_tokens > budget):
+            groups.append(current)
+            current, current_tokens = [], 0
+        current.append(line)
+        current_tokens += line_tokens
+    if current:
+        groups.append(current)
+    return groups
+
+
 def _chunk_one_table(
-    page: ParsedPage, title: str, header: str, data_lines: list[str], rows_per_chunk: int
+    page: ParsedPage,
+    title: str,
+    header: str,
+    data_lines: list[str],
+    rows_per_chunk: int,
+    size_tokens: int = 600,
 ) -> list[ChunkPiece]:
     """Shared table-chunking core — shape guard, then either a fallback-tagged prose
     chunking or a computed-summary chunk plus row-groups. Used both for whole-sheet
@@ -266,25 +323,30 @@ def _chunk_one_table(
     if summary_piece:
         pieces.append(summary_piece)
 
+    enc = _get_encoding()
     offset = 0
-    for start in range(0, len(data_lines), rows_per_chunk):
-        group = data_lines[start : start + rows_per_chunk]
+    start = 0
+    for group in _group_rows_adaptively(data_lines, header, title, rows_per_chunk, size_tokens, enc):
         body_lines = ([title] if title else []) + [header] + group
         chunk_text = "\n".join(body_lines)
+        end = start + len(group)
         pieces.append(
             ChunkPiece(
                 page=page.page,
                 offset_start=offset,
                 offset_end=offset + len(chunk_text),
                 text=chunk_text,
-                metadata={"row_range": [start, start + len(group)]},
+                metadata={"row_range": [start, end]},
             )
         )
         offset += len(chunk_text)
+        start = end
     return pieces
 
 
-def chunk_inventory_rows(pages: list[ParsedPage], rows_per_chunk: int = 20) -> list[ChunkPiece]:
+def chunk_inventory_rows(
+    pages: list[ParsedPage], rows_per_chunk: int = 20, size_tokens: int = 600
+) -> list[ChunkPiece]:
     """Group N pipe-delimited rows per chunk, repeating the header row in every chunk.
 
     A page whose shape looks irregular (inconsistent column counts, a hidden second
@@ -315,7 +377,7 @@ def chunk_inventory_rows(pages: list[ParsedPage], rows_per_chunk: int = 20) -> l
                 ChunkPiece(page=page.page, offset_start=0, offset_end=len(text), text=text)
             )
             continue
-        pieces.extend(_chunk_one_table(page, title, header, data_lines, rows_per_chunk))
+        pieces.extend(_chunk_one_table(page, title, header, data_lines, rows_per_chunk, size_tokens))
     return pieces
 
 
@@ -387,7 +449,7 @@ def chunk_prose_with_tables(
                     offset += len(chunk_text)
             else:
                 for table_piece in _chunk_one_table(
-                    page, "", segment.header, segment.data_lines, rows_per_chunk
+                    page, "", segment.header, segment.data_lines, rows_per_chunk, size_tokens
                 ):
                     pieces.append(
                         ChunkPiece(
@@ -474,6 +536,75 @@ def chunk_code_manifest_file(
     return pieces
 
 
+def _is_plain_prose(piece: ChunkPiece) -> bool:
+    """True for a piece with no structural anchor of its own (not a row-group, Q&A pair,
+    computed summary, or manifest-file piece) — the case where a chunk pulled out of
+    document order is hardest to place, and most likely to contain a dangling reference
+    like "the above servers" with nothing to disambiguate it."""
+    meta = piece.metadata
+    return not (
+        "row_range" in meta
+        or "qa_index" in meta
+        or "file_path" in meta
+        or meta.get("kind") == "table_summary"
+    )
+
+
+def _structural_label(piece: ChunkPiece, doc_type: DocumentType) -> str:
+    """A short breadcrumb built only from doc-type/structural metadata — never raw
+    document content (that includes the filename, which is user-controlled) — so it's
+    safe to surface directly in the LLM extraction prompt without needing injection
+    scanning: there's nothing in it an uploaded file could have influenced."""
+    meta = piece.metadata
+    if meta.get("kind") == "table_summary":
+        return f"{doc_type.value} — computed summary"
+    if "row_range" in meta:
+        start, end = meta["row_range"]
+        anchor = f"rows {start + 1}-{end}"
+        if meta.get("embedded_table"):
+            anchor = f"embedded table, {anchor}"
+        return f"{doc_type.value} — {anchor}"
+    if "qa_index" in meta and meta["qa_index"] >= 0:
+        return f"{doc_type.value} — question {meta['qa_index'] + 1}"
+    if "file_path" in meta:
+        return f"{doc_type.value} — {meta['file_path']}"
+    return doc_type.value
+
+
+_LOOKBACK_CHARS = 160
+
+
+def _annotate_with_context(pieces: list[ChunkPiece], doc_type: DocumentType) -> None:
+    """Mutate each piece's metadata in place with two distinct context signals:
+
+    - `section_title`: the safe structural breadcrumb above, plus a `part N of M`
+      position for plain-prose pieces. Forwarded all the way to the LLM extraction
+      prompt (`chunks_to_payload` → `_spotlight_chunks`) so the model has some idea what
+      it's looking at even when a chunk is retrieved on its own.
+    - `embed_context`: for a plain-prose piece only, a short tail snippet of the
+      *previous* plain-prose piece's own text. This is raw document content, so it's
+      retrieval-only (folded into the text handed to the embedder/BM25 in `search.py`)
+      and deliberately never forwarded into the LLM-facing payload — it would otherwise
+      be a second, unscanned copy of chunk text reaching the model. It exists so a
+      pronoun-only chunk like "the above servers are production-critical" still has a
+      chance to score well against a query naming the actual servers, without widening
+      the prompt-injection surface to fix it.
+    """
+    prose_order = [i for i, p in enumerate(pieces) if _is_plain_prose(p)]
+    prose_position = {idx: pos for pos, idx in enumerate(prose_order)}
+    for i, piece in enumerate(pieces):
+        label = _structural_label(piece, doc_type)
+        if i in prose_position:
+            pos = prose_position[i]
+            label = f"{label} — part {pos + 1} of {len(prose_order)}"
+            if pos > 0:
+                prev_text = pieces[prose_order[pos - 1]].text
+                tail = prev_text[-_LOOKBACK_CHARS:].strip()
+                if tail:
+                    piece.metadata["embed_context"] = tail
+        piece.metadata["section_title"] = label
+
+
 class DocumentChunker:
     """Dispatches to a chunking strategy by `DocumentType`."""
 
@@ -486,9 +617,12 @@ class DocumentChunker:
     ) -> list[ChunkPiece]:
         settings = get_settings()
         if doc_type == DocumentType.inventory:
-            return chunk_inventory_rows(pages, settings.chunk_inventory_rows)
-        if doc_type == DocumentType.questionnaire:
-            return chunk_questionnaire_pairs(pages)
-        return chunk_prose_with_tables(
-            pages, settings.chunk_size_tokens, settings.chunk_overlap_tokens, settings.chunk_inventory_rows
-        )
+            pieces = chunk_inventory_rows(pages, settings.chunk_inventory_rows, settings.chunk_size_tokens)
+        elif doc_type == DocumentType.questionnaire:
+            pieces = chunk_questionnaire_pairs(pages)
+        else:
+            pieces = chunk_prose_with_tables(
+                pages, settings.chunk_size_tokens, settings.chunk_overlap_tokens, settings.chunk_inventory_rows
+            )
+        _annotate_with_context(pieces, doc_type)
+        return pieces

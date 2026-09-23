@@ -74,7 +74,7 @@ def health_config() -> dict:
         "vector_index": describe_vector_index() if settings.rag_enabled else "none",
         "rag_enabled": settings.rag_enabled,
         "retrieval_hybrid_enabled": settings.retrieval_hybrid_enabled,
-        "reranker_enabled": settings.reranker_enabled,
+        "reranker": settings.reranker,
         "rag_planner": settings.rag_planner,
         "extraction_strategy": settings.extraction_strategy,
         "doc_classifier": settings.doc_classifier,

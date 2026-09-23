@@ -1,5 +1,5 @@
 from app.models.entities import Chunk, Document, DocumentType
-from app.services.heuristic_extract import heuristic_extract
+from app.services.heuristic_extract import chunks_to_payload, heuristic_extract
 
 
 def _criticality_value(result, app_key: str) -> str | None:
@@ -83,3 +83,17 @@ def test_no_criticality_claim_without_a_known_app_name():
     )
     result = heuristic_extract([chunk], {"doc-3": doc})
     assert not any(c.attribute == "business_criticality" for c in result.claims)
+
+
+def test_chunks_to_payload_forwards_section_title_set_by_the_chunker():
+    chunk = Chunk(
+        id="chunk-4",
+        assessment_id="a",
+        document_id="doc-4",
+        chunk_index=0,
+        text="app-01 | RHEL 8 | 4",
+        metadata_json={"row_range": [0, 1], "section_title": "inventory — rows 1-1"},
+    )
+    payload = chunks_to_payload([chunk])
+    assert payload[0]["section_title"] == "inventory — rows 1-1"
+    assert payload[0]["row_range"] == [0, 1]

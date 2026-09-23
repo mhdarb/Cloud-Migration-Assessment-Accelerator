@@ -56,6 +56,16 @@ class Retriever(Protocol):
 
 
 @runtime_checkable
+class Reranker(Protocol):
+    """Re-score and re-order a candidate chunk list for a query before it's truncated to
+    `top_k`. Sits between fused retrieval and extraction — the fusion algorithm (RRF)
+    optimizes for recall across BM25/vector; a reranker optimizes precision on the
+    resulting candidate pool."""
+
+    def rerank(self, query: str, chunks: list[Chunk], top_k: int) -> list[Chunk]: ...
+
+
+@runtime_checkable
 class Chunker(Protocol):
     """Split parsed document pages into persistable chunk pieces, per doc type."""
 

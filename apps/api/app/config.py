@@ -85,7 +85,9 @@ class Settings(BaseSettings):
     vector_score_threshold: float = 0.02
     retrieval_hybrid_enabled: bool = True
     retrieval_rrf_k: int = 60
-    reranker_enabled: bool = False
+    reranker: str = "off"  # "off" | "cross_encoder" | "llm"
+    reranker_candidate_pool: int = 20
+    reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
     # Provider-agnostic chat model layer (P2)
     llm_provider: str = ""  # "" = auto (Azure), or "openai_compatible"

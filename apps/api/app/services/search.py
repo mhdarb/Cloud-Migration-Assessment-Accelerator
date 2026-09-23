@@ -7,13 +7,28 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.models.entities import Chunk
-from app.services.ports import Embedder, VectorIndex
+from app.services.ports import Embedder, Reranker, Retriever, VectorIndex
 
 logger = logging.getLogger(__name__)
 
 
 def _tokenize(text: str) -> list[str]:
     return re.findall(r"[a-z0-9]+", (text or "").lower())
+
+
+def chunk_search_text(chunk: Chunk) -> str:
+    """Text actually handed to the embedder/BM25/keyword scorer for a chunk — its own
+    text plus, if `chunkers._annotate_with_context` set one, a short tail snippet of the
+    *previous* chunk (`embed_context`). A plain-prose chunk like "the above servers are
+    production-critical" has nothing in its own text for a query naming the servers to
+    match against; folding in a sliver of the preceding chunk gives it a fighting chance.
+    Retrieval-only: `Chunk.text` (used for citation-quote validation and the LLM prompt)
+    is never modified — only what's embedded/indexed changes."""
+    meta = chunk.metadata_json or {}
+    context = meta.get("embed_context")
+    if not context:
+        return chunk.text
+    return f"{context}\n\n{chunk.text}"
 
 
 def reciprocal_rank_fusion(ranked_id_lists: list[list[str]], k: int = 60) -> list[str]:
@@ -40,7 +55,7 @@ class ChunkIndexer:
         if not chunks:
             return {"indexed": 0, "backend": "none"}
 
-        vectors = self._embedder.embed_texts([c.text for c in chunks])
+        vectors = self._embedder.embed_texts([chunk_search_text(c) for c in chunks])
         named_counts: dict[str, int] = {}
         for index in self._indexes:
             try:
@@ -95,7 +110,7 @@ class KeywordRetriever:
         chunks = self._load_chunks(db, assessment_id)
         scored: list[tuple[int, Chunk]] = []
         for chunk in chunks:
-            text = chunk.text.lower()
+            text = chunk_search_text(chunk).lower()
             score = sum(1 for t in terms if t in text)
             if score:
                 scored.append((score, chunk))
@@ -128,7 +143,7 @@ class BM25Retriever:
             db.query(Chunk).filter(Chunk.assessment_id == assessment_id).all()
         )
         self._cached_assessment_id = assessment_id
-        tokenized = [_tokenize(c.text) for c in self._cached_chunks]
+        tokenized = [_tokenize(chunk_search_text(c)) for c in self._cached_chunks]
         self._bm25 = BM25Okapi(tokenized) if tokenized else None
 
     def retrieve(
@@ -240,6 +255,44 @@ class MergingRetriever:
             if len(ordered) >= k:
                 break
         return ordered
+
+
+class RerankingRetriever:
+    """Decorator (not a subclass — `Retriever` is a structural `Protocol`) around any
+    `Retriever`: pulls a larger candidate pool from it, then reranks that pool down to
+    `top_k`. Keeps reranking fully independent of the fusion algorithm — RRF still
+    optimizes for recall across BM25/vector; the `Reranker` then optimizes precision on
+    the resulting pool, and either half can be swapped without touching the other."""
+
+    def __init__(
+        self,
+        inner: Retriever,
+        reranker: Reranker,
+        *,
+        candidate_pool: int | None = None,
+    ) -> None:
+        self._inner = inner
+        self._reranker = reranker
+        self._candidate_pool = candidate_pool
+
+    def retrieve(
+        self,
+        db: Session,
+        assessment_id: str,
+        query: str,
+        top_k: int | None = None,
+    ) -> list[Chunk]:
+        settings = get_settings()
+        k = top_k or settings.rag_top_k
+        pool = max(self._candidate_pool or settings.reranker_candidate_pool, k)
+        candidates = self._inner.retrieve(db, assessment_id, query, top_k=pool)
+        if not candidates:
+            return candidates
+        try:
+            return self._reranker.rerank(query, candidates, k)
+        except Exception:
+            logger.exception("Reranker failed; falling back to pre-rerank ranking")
+            return candidates[:k]
 
 
 def embed_and_index(db: Session, assessment_id: str) -> dict:

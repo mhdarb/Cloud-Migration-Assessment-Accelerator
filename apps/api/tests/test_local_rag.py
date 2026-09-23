@@ -89,6 +89,78 @@ def test_faiss_indexes_and_retrieves(db_session, assessment, tmp_path, monkeypat
     assert hits[0].id == relevant.id
 
 
+def test_chunk_search_text_prepends_embed_context_when_present():
+    from app.services.search import chunk_search_text
+
+    chunk = Chunk(text="body text", metadata_json={"embed_context": "prior context"})
+    assert chunk_search_text(chunk) == "prior context\n\nbody text"
+
+
+def test_chunk_search_text_returns_plain_text_without_embed_context():
+    from app.services.search import chunk_search_text
+
+    assert chunk_search_text(Chunk(text="body text")) == "body text"
+
+
+def test_embed_context_lets_a_dangling_prose_chunk_be_found_by_its_antecedent(
+    db_session, assessment, tmp_path, monkeypatch
+):
+    """The chunking gap this closes: a chunk like "the system above is production-critical"
+    carries none of the words a query about that system would use. `embed_context` (the
+    preceding chunk's tail, set by `chunkers._annotate_with_context`) is folded into what
+    gets embedded/indexed so the chunk can still be found -- without ever changing
+    `Chunk.text` itself, which citation validation and the LLM prompt still see unmodified."""
+    from app.config import get_settings
+    from app.services import providers
+
+    monkeypatch.setenv("EMBEDDINGS_DIR", str(tmp_path / "embeddings"))
+    get_settings.cache_clear()
+    get_settings().ensure_dirs()
+    monkeypatch.setattr(providers, "get_embedder", lambda: _StubEmbedder())
+    monkeypatch.setattr(providers, "get_vector_indexes", lambda: [FaissVectorIndex()])
+
+    doc = Document(
+        assessment_id=assessment.id,
+        filename="estate.txt",
+        content_type="text/plain",
+        storage_path=str(tmp_path / "estate.txt"),
+        doc_type=DocumentType.architecture,
+        precedence=80,
+    )
+    db_session.add(doc)
+    db_session.flush()
+    dangling = Chunk(
+        assessment_id=assessment.id,
+        document_id=doc.id,
+        chunk_index=0,
+        page=1,
+        offset_start=0,
+        offset_end=40,
+        text="The system above is production-critical.",
+        metadata_json={"embed_context": "Billing Service is hosted on app-bill-01."},
+    )
+    distractor = Chunk(
+        assessment_id=assessment.id,
+        document_id=doc.id,
+        chunk_index=1,
+        page=1,
+        offset_start=40,
+        offset_end=80,
+        text="The cafeteria menu includes soup and salad.",
+    )
+    db_session.add_all([dangling, distractor])
+    db_session.commit()
+
+    result = embed_and_index(db_session, assessment.id)
+    assert result["indexed"] == 2
+
+    hits = retrieve(db_session, assessment.id, "Where is Billing Service hosted?", top_k=1)
+    assert hits
+    assert hits[0].id == dangling.id
+    # Chunk.text itself is untouched -- the fix is retrieval-only.
+    assert hits[0].text == "The system above is production-critical."
+
+
 class _FakeIndex:
     name = "fake"
 
