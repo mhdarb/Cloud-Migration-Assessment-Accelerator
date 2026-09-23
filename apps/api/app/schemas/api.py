@@ -105,6 +105,7 @@ class GraphNode(BaseModel):
     label: str
     confidence: float
     attributes: dict[str, Any] = {}
+    centrality: float = 0.0
 
 
 class GraphEdge(BaseModel):
@@ -114,6 +115,7 @@ class GraphEdge(BaseModel):
     relationship: str
     confidence: float
     needs_human_review: bool = False
+    rationale: str | None = None
 
 
 class GraphOut(BaseModel):
@@ -181,7 +183,6 @@ class HealthOut(BaseModel):
     azure_openai: bool
     azure_search: bool
     database: str
-    neo4j: bool = False
     rag: bool = False
     embeddings: str = "none"
     vector_index: str = "none"
@@ -196,7 +197,7 @@ class BlastRadiusOut(BaseModel):
     depth: int
     nodes: list[GraphNode]
     edges: list[GraphEdge]
-    source: str = "neo4j"
+    source: str = "postgres"
 
 
 # --- LLM extraction schemas ---

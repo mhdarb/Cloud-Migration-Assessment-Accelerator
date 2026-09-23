@@ -145,7 +145,6 @@ export default function HomePage() {
             <span>LLM: {llmLabel(health)}</span>
             <span>RAG: {health.rag ? "on" : "off"}</span>
             <span>Embeddings: {health.embeddings}</span>
-            <span>Neo4j: {health.neo4j ? "up" : "down"}</span>
             <span>Search: {health.azure_search ? "Azure AI Search" : "local"}</span>
             <span>DB: {health.database}</span>
           </div>

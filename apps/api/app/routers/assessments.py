@@ -29,7 +29,7 @@ from app.services.evidence import resolve_evidence, resolve_evidence_map
 from app.services.graph import build_graph, get_blast_radius
 from app.services.pipeline import run_pipeline
 from app.services.pipeline_lock import is_in_flight
-from app.services.providers import get_graph_sink, get_retriever
+from app.services.providers import get_retriever
 from app.services.report import report_to_schema
 
 router = APIRouter(prefix="/assessments", tags=["assessments"])
@@ -224,7 +224,6 @@ def review_claim(
             body.action,
             body.override_value,
             body.notes,
-            get_graph_sink(),
             retriever=_questions_retriever(),
         )
     except assessments.AssessmentNotFound as exc:
@@ -330,7 +329,7 @@ def complete_assessment_review(
 ) -> AssessmentOut:
     assessment = _assessment(db, assessment_id)
     try:
-        updated = assessments.finish_review(db, assessment, get_graph_sink())
+        updated = assessments.finish_review(db, assessment)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     return assessments.assessment_out(updated)

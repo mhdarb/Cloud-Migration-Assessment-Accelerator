@@ -41,12 +41,19 @@ export function DependencyGraph({
       const isCenter = centerId === n.id;
       const inBlast = !highlight || highlight.has(n.id);
       const dimmed = Boolean(highlight && highlight.size > 0 && !inBlast);
+      // Border weight scales with centrality (PageRank over the dependency graph) --
+      // a component many others connect to reads visually heavier, so the riskiest
+      // things to touch during migration stand out without needing a separate legend.
+      const borderWidth = 2 + Math.round(Math.min(n.centrality, 1) * 4);
+      const label = n.centrality > 0.05
+        ? `${n.label}\n(${Math.round(n.confidence * 100)}% · risk ${Math.round(n.centrality * 100)}%)`
+        : `${n.label}\n(${Math.round(n.confidence * 100)}%)`;
       return {
         id: n.id,
         position: { x: 80 + col * 220, y: 40 + Math.max(row, 0) * 140 },
-        data: { label: `${n.label}\n(${Math.round(n.confidence * 100)}%)` },
+        data: { label },
         style: {
-          border: `2px solid ${
+          border: `${borderWidth}px solid ${
             isCenter ? "#111827" : TYPE_COLOR[n.type] || "#666"
           }`,
           borderRadius: 10,
@@ -68,19 +75,26 @@ export function DependencyGraph({
         !highlight ||
         highlight.size === 0 ||
         (highlight.has(e.source) && highlight.has(e.target));
+      // "possible_dependency" edges come from the relationship inferencer, not an
+      // extracted claim -- dash them so they read visually as a guess to verify, not a
+      // finding, matching how they're persisted (needs_human_review, no evidence_refs).
+      const isInferred = e.relationship === "possible_dependency";
       return {
         id: e.id,
         source: e.source,
         target: e.target,
-        label: e.relationship,
+        label: isInferred ? "possible dependency (inferred)" : e.relationship.replaceAll("_", " "),
         animated: e.needs_human_review || Boolean(centerId && inBlast),
         style: {
           stroke: !inBlast
             ? "#e5e2dc"
-            : e.needs_human_review
-              ? "#b45309"
-              : "#9ca3af",
+            : isInferred
+              ? "#6d28d9"
+              : e.needs_human_review
+                ? "#b45309"
+                : "#9ca3af",
           strokeWidth: inBlast && centerId ? 2.5 : e.needs_human_review ? 2 : 1.5,
+          strokeDasharray: isInferred ? "6 4" : undefined,
           opacity: inBlast ? 1 : 0.2,
         },
         markerEnd: { type: MarkerType.ArrowClosed, color: "#9ca3af" },

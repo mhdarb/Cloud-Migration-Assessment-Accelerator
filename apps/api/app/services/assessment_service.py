@@ -18,7 +18,7 @@ from app.models.entities import (
 from app.schemas.api import AssessmentOut, DocumentOut, EntityOut
 from app.services.assessment_questions import build_assessment_answers, persist_ad_hoc_question
 from app.services.inventory import load_inventory
-from app.services.ports import GraphSink, Retriever
+from app.services.ports import Retriever
 from app.services.reconciliation import apply_claim_review, rematerialize_entities
 from app.services.report import generate_report
 from app.services.sizing import generate_recommendations
@@ -82,7 +82,6 @@ def rename_assessment(db: Session, assessment: Assessment, name: str) -> Assessm
 
 def delete_assessment(db: Session, assessment: Assessment) -> None:
     from app.services.ingest import clear_derived
-    from app.services.neo4j_graph import purge_assessment
     from app.services.pipeline_lock import is_in_flight
     from app.services.providers import get_vector_indexes
 
@@ -98,7 +97,6 @@ def delete_assessment(db: Session, assessment: Assessment) -> None:
     db.delete(assessment)
     db.commit()
     shutil.rmtree(Path(storage_dir) / assessment_id, ignore_errors=True)
-    purge_assessment(assessment_id)
 
 
 def remove_document(
@@ -168,7 +166,6 @@ def review_claim(
     action: str,
     override_value: str | None,
     notes: str | None,
-    graph: GraphSink,
     retriever: Retriever | None = None,
 ) -> Claim:
     claim = (
@@ -182,7 +179,6 @@ def review_claim(
     capture_review_learning(assessment, updated, action.lower())
     db.commit()
     rematerialize_entities(db, assessment.id)
-    graph.sync(db, assessment.id)
     generate_recommendations(db, assessment.id)
     generate_report(db, assessment.id, retriever=retriever)
     return updated
@@ -199,7 +195,7 @@ def ask_engagement_question(
     return build_assessment_answers(db, assessment.id, retriever=retriever)
 
 
-def finish_review(db: Session, assessment: Assessment, graph: GraphSink) -> Assessment:
+def finish_review(db: Session, assessment: Assessment) -> Assessment:
     if assessment.status != PipelineStatus.completed:
         raise ValueError("Pipeline must be completed before finishing review")
     complete_review(db, assessment)
@@ -208,7 +204,6 @@ def finish_review(db: Session, assessment: Assessment, graph: GraphSink) -> Asse
         event="review_completed",
         detail={"note": "Assessment marked migration-ready after review"},
     )
-    graph.sync(db, assessment.id)
     db.commit()
     db.refresh(assessment)
     return assessment

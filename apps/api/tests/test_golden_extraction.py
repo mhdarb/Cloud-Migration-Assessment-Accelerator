@@ -35,7 +35,7 @@ from app.services.llm_reasoning import get_grounded_prose
 from app.services.pipeline import NFR_ATTRIBUTES
 from app.services.providers import get_embedder, get_llm_extractor, get_retriever, get_vector_indexes
 from app.services.questionnaire_extract import sync_uploaded_questions
-from app.services.reconciliation import persist_extraction
+from app.services.reconciliation import persist_extraction, persist_inferred_relationships
 from app.services.report import generate_report
 from app.services.search import ChunkIndexer
 from app.services.sizing import generate_recommendations
@@ -76,11 +76,12 @@ def _run_pipeline_sync(db_session, assessment_id: str) -> dict:
     prose = get_grounded_prose()
     persist_extraction(db_session, assessment_id, extraction, prose=prose)
     sync_uploaded_questions(db_session, assessment_id)
+    relationship_meta = persist_inferred_relationships(db_session, assessment_id)
     generate_recommendations(db_session, assessment_id)
     generate_report(
         db_session, assessment_id, extraction, prose=prose, retriever=retriever, rag_metrics=rag_metrics
     )
-    return {"rag_metrics": rag_metrics, "index_meta": index_meta}
+    return {"rag_metrics": rag_metrics, "index_meta": index_meta, "relationship_meta": relationship_meta}
 
 
 def test_golden_contoso_pipeline(db_session, assessment, monkeypatch):
@@ -212,4 +213,37 @@ def test_golden_contoso_pipeline(db_session, assessment, monkeypatch):
     # 4 + 8 + 4 from Customer Portal/Billing Service/Identity Gateway; Reporting Hub's vCPU
     # cell is deliberately blank in the sample data, so it's excluded from the sum (count=3/4).
     assert "vcpus: sum=16" in summary_hits[0].text
+
+    # Contoso's 4 real applications each have their own dedicated server, so the
+    # co-location inferencer shouldn't propose an edge between any pair of them. (It does
+    # propose one involving a "db-and" pseudo-application -- a pre-existing, unrelated
+    # heuristic_extract.py regex bug: `_HOSTED_PATTERN` is case-insensitive, so "...Oracle
+    # Finance DB and is hosted on server app-bill-01" matches "DB and" as if it were a
+    # two-word app name. Out of scope here; asserting on the 4 known real apps specifically
+    # keeps this test from depending on that unrelated bug's exact behavior.)
+    real_apps = {"customer-portal", "billing-service", "identity-gateway", "reporting-hub"}
+    inferred_among_real_apps = [
+        e
+        for e in db_session.query(DependencyEdge)
+        .filter(
+            DependencyEdge.assessment_id == assessment.id,
+            DependencyEdge.rel_type == "possible_dependency",
+        )
+        .all()
+        if e.source_key in real_apps and e.target_key in real_apps
+    ]
+    assert inferred_among_real_apps == []
+
+    # Graph + centrality: built live from Postgres now that there's no separate graph
+    # database to sync to. billing-service sits in the middle of the dependency chain
+    # (customer-portal -> billing-service -> identity-gateway, plus reporting-hub ->
+    # billing-service) so it should rank meaningfully higher than a leaf node.
+    from app.services.graph import build_graph
+
+    graph = build_graph(db_session, assessment.id)
+    assert graph.nodes and graph.edges
+    centrality_by_id = {n.id: n.centrality for n in graph.nodes}
+    assert centrality_by_id.get("application:billing-service", 0) > centrality_by_id.get(
+        "application:reporting-hub", 0
+    )
     assert "count=3/4" in summary_hits[0].text

@@ -246,6 +246,7 @@ class DependencyEdge(Base):
     confidence: Mapped[float] = mapped_column(Float, default=0.5)
     evidence_refs: Mapped[list] = mapped_column(JSON, default=list)
     needs_human_review: Mapped[bool] = mapped_column(Boolean, default=False)
+    rationale: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     assessment: Mapped[Assessment] = relationship(back_populates="edges")
 

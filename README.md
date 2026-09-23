@@ -24,7 +24,7 @@ AI-powered **Migration Discovery & Readiness** accelerator that turns fragmented
 3. **RAG extract** — query-driven retrieve → extract with mandatory citations (incl. NFR/SLA queries)
 4. **Manifest extract** — `package.json` / `pom.xml` / Dockerfile / compose / appsettings → runtime & infra deps
 5. **Reconcile** conflicts using document precedence + confidence scores
-6. **Sync knowledge graph** to **Neo4j** when available (SQLite/Postgres graph fallback otherwise)
+6. **Build the dependency graph** live from the reconciled data, ranked by PageRank centrality, plus a deterministic (or optional LLM) pass proposing additional relationships for review
 7. **Report** readiness summary, gaps, NFRs/runtime, assumptions, and exportable JSON
 8. **Human review** — Accept / Override / Reject, then Complete Review → Follow-up with learning log
 9. **Infrastructure sizing** — auditable Azure VM/disk recommendations, estimates, alternatives, and assumptions
@@ -38,7 +38,7 @@ AI-powered **Migration Discovery & Readiness** accelerator that turns fragmented
 | API             | Python FastAPI                                                                                       |
 | UI              | Next.js (React) + React Flow                                                                         |
 | Operational DB  | **SQLite (default)** or Postgres                                                                     |
-| Knowledge graph | Neo4j 5 (optional)                                                                                   |
+| Knowledge graph | Built live from Postgres (`networkx` for centrality/PageRank) — no separate graph database             |
 | AI              | Heuristics by default; optional **Azure OpenAI** for extract + prose |
 | RAG             | Local sentence-transformers + **FAISS**, or Azure embeddings + **Azure AI Search**                   |
 
@@ -60,7 +60,7 @@ cd apps/web && cp .env.local.example .env.local && npm install && npm run dev
 ```
 
 - UI: [http://localhost:3000](http://localhost:3000)  
-- API health: [http://localhost:8000/health](http://localhost:8000/health) — expect `"neo4j": false` without Docker; that is OK. Local also shows `"embeddings": "sentence-transformers"` and `"vector_index": "faiss"`.  
+- API health: [http://localhost:8000/health](http://localhost:8000/health) — shows `"embeddings": "sentence-transformers"` and `"vector_index": "faiss"` locally.  
 - Demo script: [docs/DEMO.md](docs/DEMO.md)
 
 ### Unit tests (API)
@@ -77,21 +77,18 @@ Covers citation grounding, precedence reconciliation, ZIP safety, manifests, hyb
 Smokes upload sample files and wait for the pipeline (it starts on upload).
 
 ```bash
-uv run --project apps/api python scripts/smoke_rag_neo4j.py
+uv run --project apps/api python scripts/smoke_rag_graph.py
 uv run --project apps/api python scripts/smoke_code_nfr.py
 uv run --project apps/api python scripts/smoke_core_capabilities.py
 ```
 
-## Optional Docker (Neo4j / Postgres)
+## Optional Docker (Postgres)
 
 Only if Docker is available on the machine:
 
 ```bash
-docker compose up -d neo4j
-# optional: docker compose up -d postgres
+docker compose up -d postgres
 ```
-
-Neo4j Browser: [http://localhost:7474](http://localhost:7474) — `neo4j` / `cmaapassword`
 
 ## Code snapshot + requirements notes
 
@@ -152,12 +149,12 @@ Index should include `content` + `content_vector` fields for vector search.
 
 | Method   | Path                                                | Description                                                    |
 | -------- | --------------------------------------------------- | -------------------------------------------------------------- |
-| GET      | `/health`                                           | Status + `rag` / `embeddings` / `vector_index` / `neo4j` flags |
+| GET      | `/health`                                           | Status + `rag` / `embeddings` / `vector_index` flags           |
 | GET      | `/health/config`                                    | Every dynamic-architecture/retrieval/guardrail flag's resolved value (never secrets) |
 | GET/POST | `/assessments`                                      | List / create (multipart: `name`, `files`)                     |
 | GET      | `/assessments/{id}`                                 | Detail + pipeline metrics                                      |
 | PATCH    | `/assessments/{id}`                                 | Rename (`{ "name" }`)                                          |
-| DELETE   | `/assessments/{id}`                                 | Delete assessment, uploads, FAISS, and Neo4j nodes (409 if running) |
+| DELETE   | `/assessments/{id}`                                 | Delete assessment, uploads, and FAISS index (409 if running)   |
 | POST     | `/assessments/{id}/documents`                       | Add source files (starts pipeline)                             |
 | DELETE   | `/assessments/{id}/documents/{document_id}`         | Remove a source file (re-runs if others remain; 409 if running) |
 | POST     | `/assessments/{id}/run`                             | Re-run pipeline                                                |
@@ -168,7 +165,7 @@ Index should include `content` + `content_vector` fields for vector search.
 | GET      | `/assessments/{id}/entities`                        | Reconciled inventory                                           |
 | GET      | `/assessments/{id}/assessment-questions`            | Grounded standard migration-template answers                   |
 | GET      | `/assessments/{id}/recommendations`                 | Azure VM/disk sizing and cost estimates                        |
-| GET      | `/assessments/{id}/graph`                           | KG graph (Neo4j preferred)                                     |
+| GET      | `/assessments/{id}/graph`                           | Dependency graph, built live from Postgres with PageRank centrality |
 | GET      | `/assessments/{id}/graph/blast-radius?node=&depth=` | Neighborhood expansion                                         |
 | GET      | `/assessments/{id}/report`                          | Assessment output JSON                                         |
 | GET      | `/assessments/{id}/conflicts`                       | Conflicting facts                                              |
@@ -179,11 +176,11 @@ Interactive docs: [http://localhost:8000/docs](http://localhost:8000/docs)
 ## Repo layout
 
 ```
-apps/api/          FastAPI + RAG + Neo4j sync
+apps/api/          FastAPI + RAG + dependency graph
 apps/web/          Next.js UI
 docs/              Index, SETUP, ARCHITECTURE, DEMO, AI LZ
 sample-data/       Contoso synthetic estate
 scripts/           sample data + smoke tests
-docker-compose.yml Optional Postgres + Neo4j
+docker-compose.yml Optional Postgres
 ```
 

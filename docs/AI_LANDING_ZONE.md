@@ -13,7 +13,6 @@ PLATFORM / AI HUB (enterprise-owned)
 APPLICATION SPOKE (this accelerator)
   API (Container Apps / App Service) · Web
   Postgres · Storage (uploads) · Key Vault refs
-  Optional Neo4j
   Private endpoints to hub AI + data services
 ```
 

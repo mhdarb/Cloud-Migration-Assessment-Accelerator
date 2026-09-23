@@ -18,6 +18,7 @@ from app.models.entities import (
     Server,
 )
 from app.schemas.api import ExtractionResult
+from app.services.inventory import load_inventory
 from app.services.llm_reasoning import GroundedProse, get_grounded_prose
 
 
@@ -147,6 +148,36 @@ def persist_extraction(
         db.add(edge)
 
     db.commit()
+
+
+def persist_inferred_relationships(db: Session, assessment_id: str) -> dict[str, int]:
+    """Run the configured `RelationshipInferencer` over this assessment's fully
+    reconciled entities/edges and persist any proposed relationships as low-confidence
+    `DependencyEdge` rows with no `evidence_refs` (there's no chunk backing a guess) --
+    flagged for human review exactly like any other low-confidence edge, never silently
+    treated as fact."""
+    from app.services.providers import get_relationship_inferencer
+
+    settings = get_settings()
+    snapshot = load_inventory(db, assessment_id)
+    proposed = get_relationship_inferencer().infer(snapshot)
+    for rel in proposed:
+        db.add(
+            DependencyEdge(
+                assessment_id=assessment_id,
+                source_type=rel.source_type,
+                source_key=rel.source_key,
+                target_type=rel.target_type,
+                target_key=rel.target_key,
+                rel_type=rel.relationship,
+                confidence=rel.confidence,
+                evidence_refs=[],
+                needs_human_review=rel.confidence < settings.confidence_review_threshold,
+                rationale=rel.rationale,
+            )
+        )
+    db.commit()
+    return {"inferred_edges": len(proposed)}
 
 
 def _materialize_entities(db: Session, assessment_id: str, claims: list[Claim]) -> None:

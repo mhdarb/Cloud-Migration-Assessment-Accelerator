@@ -39,7 +39,7 @@ The `ports.py` / `providers.py` composition root made this additive: each capabi
 ## 2. Guiding principles (held throughout)
 
 1. **Evidence-first survives.** Every dynamic output carries `chunk_ids` + `evidence_quote` and passes `citations.validate_citations` unchanged.
-2. **Graceful degradation survives.** Every new dynamic port has a deterministic offline implementation (`MOCK_LLM=true` + local embeddings + no Neo4j still produces a full run).
+2. **Graceful degradation survives.** Every new dynamic port has a deterministic offline implementation (`MOCK_LLM=true` + local embeddings still produces a full run — no external graph database required at all).
 3. **The deterministic gate is untouched.** `sizing.py`, `pricing.py`, `reconciliation.py`, `citations.py` were not modified.
 4. **Human-in-the-loop absorbs uncertainty.** Low-confidence doc classifications surface as report gaps rather than silently mislabeling.
 5. **Nothing shipped without an eval.** `tests/test_golden_extraction.py` (hand-verified against `scripts/generate_sample_data.py`'s literal planted facts, not hand-traced regexes) gates the chunking/retrieval/planner changes.

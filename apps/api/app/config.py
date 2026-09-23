@@ -40,9 +40,7 @@ class Settings(BaseSettings):
     # Optional simple gate for lz demos (prefer Entra JWT at APIM in production)
     api_auth_key: str = ""
 
-    neo4j_uri: str = "bolt://localhost:7687"
-    neo4j_user: str = "neo4j"
-    neo4j_password: str = "cmaapassword"
+    relationship_inferencer: str = "heuristic"  # "off" | "heuristic" | "llm"
 
     confidence_review_threshold: float = 0.7
     mock_llm: bool = True

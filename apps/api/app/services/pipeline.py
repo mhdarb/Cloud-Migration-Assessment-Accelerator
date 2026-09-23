@@ -12,9 +12,9 @@ from app.services.extraction_merge import merge_extractions
 from app.services.ingest import clear_derived, ingest_documents
 from app.services.llm_reasoning import get_grounded_prose
 from app.services.pipeline_lock import release, try_acquire
-from app.services.ports import ClaimExtractor, Embedder, GraphSink, Retriever, VectorIndex
+from app.services.ports import ClaimExtractor, Embedder, Retriever, VectorIndex
 from app.services.questionnaire_extract import sync_uploaded_questions
-from app.services.reconciliation import persist_extraction
+from app.services.reconciliation import persist_extraction, persist_inferred_relationships
 from app.services.report import generate_report
 from app.services.search import ChunkIndexer
 from app.services.sizing import generate_recommendations
@@ -39,7 +39,6 @@ NFR_ATTRIBUTES = {
 class PipelineServices:
     embedder: Embedder
     indexes: Sequence[VectorIndex]
-    graph: GraphSink
     extractor: ClaimExtractor
     retriever: Retriever
     storage_dir: str
@@ -106,7 +105,7 @@ class AssessmentPipeline:
 
         assessment.status = PipelineStatus.building_graph
         db.commit()
-        graph_meta = self._services.graph.sync(db, assessment_id)
+        relationship_meta = persist_inferred_relationships(db, assessment_id)
 
         assessment.status = PipelineStatus.generating_report
         assessment.workflow_stage = WorkflowStage.review
@@ -142,17 +141,13 @@ class AssessmentPipeline:
                 "embeddings_indexed": index_meta.get("indexed", 0),
                 "embeddings_backend": index_meta.get("backend", "none"),
                 "index_counts": index_meta.get("per_index", {}),
-                "neo4j_synced": bool(graph_meta.get("synced")),
-                "neo4j_nodes": graph_meta.get("nodes", 0),
-                "neo4j_edges": graph_meta.get("edges", 0),
+                "inferred_edges": relationship_meta.get("inferred_edges", 0),
                 "code_snapshot_count": ingested.code_snapshot_count,
                 "manifest_files_parsed": ingested.manifest_files_parsed,
                 "nfr_claim_count": nfr_claim_count,
                 "recommendation_count": len(recommendations),
             }
         )
-        if not graph_meta.get("synced"):
-            metrics["neo4j_warning"] = graph_meta.get("reason", "sync_failed")
         assessment.metrics = metrics
         assessment.status = PipelineStatus.completed
         db.commit()

@@ -1,6 +1,6 @@
 # Setup guide (uv-first, no Docker required)
 
-This runs on a locked-down laptop with **uv + Node**. Docker, Neo4j, Postgres, and Azure are optional.
+This runs on a locked-down laptop with **uv + Node**. Docker, Postgres, and Azure are optional.
 
 Pipeline internals (HTTP → extract graphs → what the LLM may change): **[ARCHITECTURE.md](ARCHITECTURE.md)**.
 
@@ -15,7 +15,6 @@ Pipeline internals (HTTP → extract graphs → what the LLM may change): **[ARC
 | npm                      | comes with Node | Yes                                             |
 | Docker                   | —               | No                                              |
 | Azure OpenAI / AI Search | —               | No (demo uses mock LLM + local embeddings)      |
-| Neo4j                    | —               | No (graph falls back to SQLite/Postgres tables) |
 
 Install uv (macOS / Linux): `curl -LsSf https://astral.sh/uv/install.sh | sh`  
 Windows: `powershell -c "irm https://astral.sh/uv/install.ps1 | iex"`
@@ -74,8 +73,6 @@ AZURE_PRICING_LIVE=false
 
 Set `MOCK_LLM=false` and configure **Azure OpenAI** to enable LLM extraction, grounded question answers, conflict notes, and the readiness summary (citation checks and SKU pick stay rule-based). If Azure OpenAI is not configured, the app stays on heuristics even when `MOCK_LLM=false`. Optional SKU explanation uses Azure OpenAI when configured, otherwise a rule-based template. Set `AZURE_PRICING_LIVE=true` only to refresh VM list prices from Azure Retail Prices.
 
-You can leave `NEO4J_`* set; if Neo4j is not running the API still works (`neo4j: false` in `/health`).
-
 ### 5. Start the API
 
 **macOS / Linux**
@@ -117,7 +114,6 @@ Expected for local uv:
   "rag": true,
   "embeddings": "sentence-transformers",
   "vector_index": "faiss",
-  "neo4j": false,
   "database": "sqlite+pysqlite"
 }
 ```
@@ -151,7 +147,7 @@ Open [http://localhost:3000](http://localhost:3000).
 3. Wait until status is **completed** (processing starts on upload).
 4. Explore **Questions**, **Sizing**, **Findings**, **Graph** (blast radius), **Report**, **Review**.
 
-Blast radius will show `Source: postgres` when Neo4j is down — that is expected.
+Blast radius always shows `Source: postgres` — the graph is built live from the reconciled Postgres/SQLite tables, with node border weight reflecting PageRank centrality.
 
 ### 8. Unit tests
 
@@ -170,20 +166,18 @@ uv run --project apps/api mypy app   # informational — not a CI gate yet
 ### 9. Smoke tests (optional)
 
 ```bash
-uv run --project apps/api python scripts/smoke_rag_neo4j.py
+uv run --project apps/api python scripts/smoke_rag_graph.py
 uv run --project apps/api python scripts/smoke_code_nfr.py
 uv run --project apps/api python scripts/smoke_core_capabilities.py
 ```
 
-Smoke scripts tolerate `neo4j: false`. `smoke_core_capabilities.py` asserts grounded questions plus Azure recommendations.
+`smoke_core_capabilities.py` asserts grounded questions plus Azure recommendations.
 
 ---
 
-## Optional: Neo4j / Postgres (if Docker is present)
+## Optional: Postgres (if Docker is present)
 
 ```bash
-docker compose up -d neo4j
-# optional operational DB:
 docker compose up -d postgres
 ```
 
@@ -192,14 +186,7 @@ Then in `.env`:
 ```env
 # Postgres instead of SQLite
 DATABASE_URL=postgresql+psycopg://cmaa:cmaa@localhost:5432/cmaa
-
-NEO4J_URI=bolt://localhost:7687
-NEO4J_USER=neo4j
-NEO4J_PASSWORD=cmaapassword
 ```
-
-Neo4j Browser: [http://localhost:7474](http://localhost:7474)  
-After a successful pipeline run, `/health` shows `"neo4j": true` and assessment metrics include `neo4j_synced: true`.
 
 ---
 
@@ -228,7 +215,6 @@ AZURE_OPENAI_EMBEDDING_DEPLOYMENT=text-embedding-3-small
 | `ModuleNotFoundError: app`             | Wrong cwd / PYTHONPATH           | Run uvicorn from **repo root** with `PYTHONPATH=apps/api` or use `./apps/api/run.sh` |
 | Port 8000 in use                       | Prior API still running          | Stop the other process or use `--port 8001` and update `NEXT_PUBLIC_API_URL`         |
 | UI loads but no assessments            | API down or CORS                 | Check `/health`; ensure `API_CORS_ORIGINS` includes `http://localhost:3000`          |
-| `neo4j: false` / `neo4j_synced: false` | No Neo4j process                 | Normal without Docker; graph still works via SQLite fallback                         |
 | Empty findings after upload            | Pipeline still running or failed | Poll assessment status; check `error_message` on the assessment                      |
 | `409` pipeline already running         | Double run                       | Wait until status is completed/failed, then re-run                                   |
 | Sample files missing                   | Not generated                    | `uv run --project apps/api python scripts/generate_sample_data.py`                   |

@@ -29,7 +29,7 @@ Start at [`providers.py`](../apps/api/app/services/providers.py) (`build_pipelin
 
 | Step | Module | What it does |
 |------|--------|----------------|
-| Wire | `providers.py`, `ports.py` | Choose embedder, FAISS or Azure Search, `ChatCompleter`, graph sink |
+| Wire | `providers.py`, `ports.py` | Choose embedder, FAISS or Azure Search, `ChatCompleter`, relationship inferencer |
 | Ingest | `ingest.py`, `parsers.py`, `storage.py`, `code_manifests.py` | Parse docs/CSV/JSON/ZIP; chunk; extract manifests |
 | Index | `embeddings.py`, `vector_indexes.py`, `search.py` | Embed + FAISS or Azure AI Search |
 | Retrieve / extract | `agent_extract.py`, `heuristic_extract.py` / `llm_extractors.py`, `citations.py` | RAG queries → claims with quotes |
@@ -57,7 +57,7 @@ flowchart TD
 3. The detail page polls `GET /assessments/{id}` until `status` is `completed` or `failed`.
 4. Each tab then calls a read API (questions, claims, recommendations, graph, report, conflicts). Routers stay thin: HTTP + schema. Business logic lives in `assessment_service` and the service modules.
 
-`GET /health` in [`main.py`](../apps/api/app/main.py) reports `embeddings`, `vector_index`, `mock_llm`, and `neo4j`.
+`GET /health` in [`main.py`](../apps/api/app/main.py) reports `embeddings`, `vector_index`, and `mock_llm`.
 
 ## High-level product flow
 
@@ -70,29 +70,31 @@ flowchart LR
   Merge --> Reconcile[Reconcile conflicts]
   Reconcile --> Questions[Grounded assessment questions]
   Reconcile --> Size[Azure VM and disk sizing]
+  Reconcile --> Infer[Infer additional relationships]
   Reconcile --> Store[(SQLite or Postgres)]
-  Reconcile --> Neo4j[(Neo4j optional)]
+  Infer --> Store
   Questions --> Report[Assessment report]
   Size --> Report
-  Store --> Report
+  Store --> Graph[Dependency graph + centrality, built live]
+  Graph --> Report
   Store --> UI[Next.js UI]
-  Neo4j --> UI
+  Graph --> UI
 ```
 
 ## Components
 
 | Component       | Path                                        | Role                                                      |
 | --------------- | ------------------------------------------- | --------------------------------------------------------- |
-| API             | `apps/api`                                  | FastAPI, pipeline, RAG, questions, sizing, Neo4j sync     |
+| API             | `apps/api`                                  | FastAPI, pipeline, RAG, questions, sizing, dependency graph |
 | UI              | `apps/web`                                  | Create, questions, sizing, findings, graph, report, review |
 | Operational DB  | SQLite (default) or Postgres                | Assessments, documents, chunks, claims, conflicts, recs, report |
 | Vector index    | `data/embeddings/*.faiss` (+ `.meta.json`) or Azure AI Search | Chunk retrieval for RAG |
-| Knowledge graph | Neo4j (optional)                            | Apps/servers/DBs/interfaces + relationships               |
+| Dependency graph | Built live from Postgres (`graph.py` + `graph_analytics.py`) | Apps/servers/DBs/interfaces + relationships, ranked by PageRank centrality |
 | Sample pack     | `sample-data/`                              | Contoso demo estate                                       |
 
 ## Pipeline stages (functions)
 
-Orchestrated in [`AssessmentPipeline._execute`](../apps/api/app/services/pipeline.py). `PipelineServices` (built in `providers.py`) injects embedder, vector indexes, graph sink, and claim extractor.
+Orchestrated in [`AssessmentPipeline._execute`](../apps/api/app/services/pipeline.py). `PipelineServices` (built in `providers.py`) injects embedder, vector indexes, and claim extractor.
 
 | Status (`PipelineStatus`) | What runs | Workflow (`WorkflowStage`) |
 |---------------------------|-----------|----------------------------|
@@ -100,7 +102,7 @@ Orchestrated in [`AssessmentPipeline._execute`](../apps/api/app/services/pipelin
 | (same run) | `ChunkIndexer.embed_and_index` | |
 | `extracting` | `extractor.extract_assessment` → merge ZIP manifest extractions | `implement` |
 | `reconciling` | `persist_extraction` | |
-| `building_graph` | `graph.sync` | |
+| `building_graph` | `persist_inferred_relationships` (`RelationshipInferencer`) | |
 | `generating_report` | `generate_recommendations` → `generate_report` | `review` |
 | `completed` / `failed` | metrics written; exception → `error_message` | |
 
@@ -108,8 +110,8 @@ Orchestrated in [`AssessmentPipeline._execute`](../apps/api/app/services/pipelin
 2. **Index** — local MiniLM + **FAISS**, or Azure embeddings + **Azure AI Search** (`lz` / `LOCAL_EMBEDDINGS=false`).
 3. **Extract** — LangGraph RAG (see below); merge code-manifest claims.
 4. **Reconcile** — document precedence + confidence; open conflicts; optional LLM notes.
-5. **Graph** — `GraphSink` (Neo4j when up, otherwise no-op).
-6. **Report** — questions, sizing, readiness summary, gaps, inventory JSON.
+5. **Infer relationships** — `RelationshipInferencer` proposes additional low-confidence edges (e.g. apps sharing a server) for human review; no separate graph database to sync.
+6. **Report** — questions, sizing, readiness summary, gaps, inventory JSON, dependency graph with PageRank centrality.
 
 - **Review gate** (`ENFORCE_REVIEW`): `POST /assessments/{id}/complete-review` requires an empty review queue and no open conflicts, then advances to **Follow-up**.
 - **Follow-up**: rejects/overrides and notes append to `metrics.follow_up_log`.
@@ -148,7 +150,7 @@ flowchart TD
 
 Citation grounding: [`citations.py`](../apps/api/app/services/citations.py). Guardrails wrap extract: [`guardrails.py`](../apps/api/app/services/guardrails.py) (empty chunks, `InjectionDetector` chain, optional Azure Content Safety, output allowlists, PII redaction). Then citations again.
 
-ZIP manifests, reconcile, sizing, Neo4j, report, and review stay **outside** LangGraph.
+ZIP manifests, reconcile, sizing, relationship inference, report, and review stay **outside** LangGraph.
 
 Chunking is structure-aware and routed by document type (row-group for CMDB/inventory, Q/A-pair for questionnaires, bounded token windows per manifest file for code snapshots, table-aware prose splitting for architecture/requirements docs) — see [`chunkers.py`](../apps/api/app/services/chunkers.py). Inventory, requirements, and code-snapshot chunks are additionally boosted into the mock-path retrieval set.
 
@@ -188,7 +190,7 @@ Composition root: [`providers.py`](../apps/api/app/services/providers.py). Proto
 | `DocClassifier` | `KeywordClassifier`, `LlmClassifier` | Document type + confidence + rationale |
 | `QuestionPlanner` | `HeuristicQuestionPlanner`, `LlmQuestionPlanner`, `NoOpQuestionPlanner` | Estate-specific supplementary questions |
 | `InjectionDetector` | `RegexInjectionDetector`, `SemanticInjectionDetector`, `CompositeInjectionDetector` | Prompt-injection signal detection |
-| `GraphSink` | `Neo4jGraphSink`, `NullGraphSink` | Optional Neo4j sync |
+| `RelationshipInferencer` | `NoOpRelationshipInferencer`, `CoLocationInferencer`, `LlmRelationshipInferencer` | Propose additional low-confidence dependency edges for review |
 
 See [DYNAMIC_ARCHITECTURE.md](DYNAMIC_ARCHITECTURE.md) for how the last four ports fit together (each is model-backed with a deterministic fallback, selected in `providers.py`).
 
@@ -235,13 +237,13 @@ SQLAlchemy models: [`entities.py`](../apps/api/app/models/entities.py).
 | `Claim` | One fact: entity/attribute/value, quotes, `is_selected`, review fields |
 | `Conflict` | Competing claims + `selected_claim_id` + `resolution_notes` |
 | `Application` / `Server` / `DatabaseEntity` / `Interface` | Materialized inventory |
-| `DependencyEdge` | hosted_on / uses / calls / depends_on |
+| `DependencyEdge` | hosted_on / uses / calls / depends_on / possible_dependency (inferred, see below); `rationale` set only on inferred edges |
 | `InfrastructureRecommendation` | Catalog SKU JSON per server |
 | `AssessmentOutput` | Persisted report JSON + `readiness_summary` |
 | `EngagementQuestion` | `origin`: `uploaded` \| `ad_hoc` \| `dynamic` (QuestionPlanner-generated) |
 | `PipelineLockRow` | Used when `PIPELINE_LOCK_BACKEND=db` — one row per in-flight assessment, multi-worker-safe |
 
-Claims materialize into inventory + edges (`persist_extraction`), then Neo4j when the sink is available.
+Claims materialize into inventory + edges (`persist_extraction`), then `persist_inferred_relationships` proposes additional low-confidence edges before the graph is built.
 
 Every extracted fact is a **claim**: `entity_type` / `entity_key` / `attribute` / `value`, `confidence`, `evidence_refs`, `evidence_quote`, `needs_human_review`, `unsupported`. Review actions: accept / override / reject.
 
@@ -254,16 +256,17 @@ Every extracted fact is a **claim**: `entity_type` / `entity_key` / `attribute` 
 - Emit runtime/framework claims and infra deps (Postgres, Redis, Kafka, …) with file-path evidence
 - Secrets: only key presence, values redacted
 
-## Knowledge graph
+## Dependency graph
 
-[`neo4j_graph.py`](../apps/api/app/services/neo4j_graph.py) + [`graph.py`](../apps/api/app/services/graph.py):
+[`graph.py`](../apps/api/app/services/graph.py) + [`graph_analytics.py`](../apps/api/app/services/graph_analytics.py) — no separate graph database; the graph is built live from the same reconciled Postgres/SQLite entities and edges every other feature reads.
 
-**Labels:** Application, Server, Database, Interface, Document  
-**Rels:** HOSTED_ON, USES, DEPENDS_ON, CALLS  
+**Node types:** application, server, database, interface  
+**Edge types:** hosted_on, uses, depends_on, calls, possible_dependency (inferred)
 
-- Prefer Neo4j for `GET /assessments/{id}/graph` and blast-radius
-- If Neo4j unavailable: build graph from SQLite/Postgres tables (BFS blast radius)
-- Pipeline never fails solely because Neo4j is down
+- `build_graph(db, assessment_id)` assembles nodes/edges from `load_inventory`, then attaches `centrality` (PageRank, undirected, via `networkx`) to every node — a component many others connect to is higher-risk to touch during migration regardless of edge direction.
+- `get_blast_radius(db, assessment_id, node, depth)` does an in-process BFS over the same graph (`BlastRadiusOut.source` is always `"postgres"`).
+- `possible_dependency` edges come from the pipeline's `building_graph` stage (`persist_inferred_relationships` → `RelationshipInferencer`), not from extraction — always low-confidence, no `evidence_refs`, `needs_human_review=True`, with a `rationale` explaining the guess (e.g. "both hosted on server X"). The default `CoLocationInferencer` is deterministic; `RELATIONSHIP_INFERENCER=llm` asks the configured chat completer instead, falling back to the deterministic strategy when unavailable.
+- Pipeline never depends on external infrastructure for this stage — it's pure computation over data already in the operational database.
 
 ## API surface
 
@@ -314,10 +317,10 @@ data/
 ## Design principles
 
 1. **Evidence-first** — claims need valid chunk refs **and** a grounded `evidence_quote` (substring of cited chunks); otherwise down-scored / cleared
-2. **Degrade gracefully** — mock LLM, local embeddings, no Neo4j still produce a full demo
+2. **Degrade gracefully** — mock LLM and local embeddings still produce a full demo; no external graph database required at all
 3. **Single claim schema** — docs, NFRs, and manifests reconcile into one model
 4. **Human-in-the-loop** — conflicts and low confidence go to the review queue; clear the queue before Follow-up (`ENFORCE_REVIEW`); learnings in `metrics.follow_up_log`
-5. **Ports** — `Embedder` / `VectorIndex` / `Retriever` / `Chunker` / `ChatCompleter` / `LlmExtractor` / `ClaimExtractor` / `RagPlanner` / `DocClassifier` / `QuestionPlanner` / `InjectionDetector` / `GraphSink`; composition root [`providers.py`](../apps/api/app/services/providers.py)
+5. **Ports** — `Embedder` / `VectorIndex` / `Retriever` / `Reranker` / `Chunker` / `ChatCompleter` / `LlmExtractor` / `ClaimExtractor` / `RagPlanner` / `DocClassifier` / `QuestionPlanner` / `InjectionDetector` / `RelationshipInferencer`; composition root [`providers.py`](../apps/api/app/services/providers.py)
 6. **Rules over generation** for SKU, citations, and precedence winners
 
 ## Module layout (API services)
@@ -330,7 +333,7 @@ data/
 | Chat / prose | `llm_clients.py`, `llm_prompts.py`, `llm_extractors.py`, `llm_reasoning.py`, `compat.py` |
 | Ports | `ports.py`, `providers.py`, `schemas/extraction_targets.py`, `schemas/planning.py`, `schemas/classification.py`, `schemas/questions.py`, `schemas/guardrail_signals.py` |
 | Outputs | `reconciliation.py`, `assessment_questions.py`, `sizing.py`, `pricing.py`, `report.py`, `evidence.py` |
-| Graph | `graph.py`, `neo4j_graph.py`, `graph_sinks.py` |
+| Graph | `graph.py`, `graph_analytics.py`, `relationship_inference.py` |
 
 See [DYNAMIC_ARCHITECTURE.md](DYNAMIC_ARCHITECTURE.md) for what each of the newer RAG/ports modules (`skills.py`, `classify.py`, `question_planning.py`, `extraction_strategies.py`, `schemas/extraction_targets.py`) actually does.
 

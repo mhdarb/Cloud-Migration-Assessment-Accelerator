@@ -32,7 +32,7 @@ While status moves ingesting → extracting → … → completed:
   - `claim_count`, `cited_claim_pct`
   - `rag_queries`, `chunks_retrieved`, `retrieval_mode`
   - `code_snapshot_count`, `manifest_files_parsed`, `nfr_claim_count`
-  - `neo4j_synced` (true only if Neo4j is up)
+  - `inferred_edges` (relationships the co-location/LLM inferencer proposed for review)
 
 **Talking point:** the RAG query planner filters which of its skills actually run based on which document types were uploaded — a questionnaire-only assessment runs noticeably fewer `rag_queries` than one with the full document mix.
 
@@ -66,7 +66,7 @@ Show:
 2. Select an application (e.g. Billing Service or contoso-billing-api).
 3. **Show blast radius** (depth 2).
 
-**Talking point:** Migration impact neighborhood — what else moves if this app moves. Source badge `neo4j` or `postgres`.
+**Talking point:** Migration impact neighborhood — what else moves if this app moves. Node border weight shows PageRank centrality (how much of the estate touches it); dashed edges are inferred relationships flagged for review, not extracted facts.
 
 ### 7. Report
 
@@ -84,7 +84,7 @@ Show:
 
 | Check     | Expected                                                        |
 | --------- | --------------------------------------------------------------- |
-| Pipeline  | Status `completed`, no hard failure without Neo4j               |
+| Pipeline  | Status `completed`                                              |
 | Citations | High `cited_claim_pct` (demo often ~100% on samples)            |
 | Code ZIP  | Node runtime + express; postgres/redis/kafka entities or edges  |
 | NFR doc   | Multiple business/NFR claims in findings/report                 |
@@ -99,5 +99,5 @@ Show:
 - Re-run pipeline with **Run pipeline** after more documents are uploaded
 - Show `/docs` OpenAPI for integration conversation
 - With `MOCK_LLM=false` plus Azure OpenAI: contrast extraction quality, question prose, conflict notes, and the readiness summary (SKU pick stays catalog-based)
-- With Docker Neo4j: show Browser at [http://localhost:7474](http://localhost:7474) and `neo4j_synced: true`
+- With `RELATIONSHIP_INFERENCER=llm` plus Azure OpenAI: contrast the co-location heuristic's proposed relationships against the LLM's
 

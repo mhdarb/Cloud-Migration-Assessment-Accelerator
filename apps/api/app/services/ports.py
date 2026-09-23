@@ -12,6 +12,8 @@ from app.schemas.classification import Classification
 from app.schemas.guardrail_signals import Signal
 from app.schemas.planning import CorpusProfile, QueryPlan
 from app.schemas.questions import InventorySummary, PlannedQuestion
+from app.schemas.relationships import InferredRelationship
+from app.services.inventory import InventorySnapshot
 from app.services.parsers import ChunkPiece, ParsedPage
 
 
@@ -123,10 +125,13 @@ class ClaimExtractor(Protocol):
 
 
 @runtime_checkable
-class GraphSink(Protocol):
-    def available(self) -> bool: ...
+class RelationshipInferencer(Protocol):
+    """Propose additional plausible relationships between entities that the extractor may
+    have missed, from the fully reconciled entity/edge snapshot. Always low-confidence and
+    persisted flagged for human review — never treated as fact the way an extracted,
+    evidence-backed edge is."""
 
-    def sync(self, db: Session, assessment_id: str) -> dict[str, Any]: ...
+    def infer(self, snapshot: InventorySnapshot) -> list[InferredRelationship]: ...
 
 
 @runtime_checkable

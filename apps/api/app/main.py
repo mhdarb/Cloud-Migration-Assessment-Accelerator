@@ -13,7 +13,6 @@ from app.observability import configure_observability
 from app.routers import assessments
 from app.schemas.api import HealthOut
 from app.services.embeddings import describe_embedder
-from app.services.neo4j_graph import neo4j_available
 from app.services.search import describe_vector_index
 
 logging.basicConfig(level=logging.INFO)
@@ -101,7 +100,6 @@ def health() -> HealthOut:
         azure_openai=settings.azure_openai_configured,
         azure_search=settings.azure_search_configured,
         database=settings.database_url.split("://")[0],
-        neo4j=neo4j_available(),
         rag=settings.rag_enabled,
         embeddings=describe_embedder() if settings.embeddings_mode == "local" else settings.embeddings_mode,
         vector_index=describe_vector_index() if settings.rag_enabled else "none",

@@ -6,17 +6,15 @@ from app.services.classify import KeywordClassifier, LlmClassifier
 from app.services.embeddings import AzureEmbedder, FallbackEmbedder, SentenceTransformerEmbedder
 from app.services.extraction import AssessmentClaimExtractor
 from app.services.extraction_strategies import EnsembleExtractor
-from app.services.graph_sinks import Neo4jGraphSink, NullGraphSink
 from app.services.llm_clients import get_chat_completer
 from app.services.llm_extractors import ChatLlmExtractor, HeuristicLlmExtractor
-from app.services.neo4j_graph import neo4j_available
 from app.services.pipeline import PipelineServices
 from app.services.ports import (
     DocClassifier,
     Embedder,
-    GraphSink,
     LlmExtractor,
     QuestionPlanner,
+    RelationshipInferencer,
     Reranker,
     Retriever,
     VectorIndex,
@@ -25,6 +23,11 @@ from app.services.question_planning import (
     HeuristicQuestionPlanner,
     LlmQuestionPlanner,
     NoOpQuestionPlanner,
+)
+from app.services.relationship_inference import (
+    CoLocationInferencer,
+    LlmRelationshipInferencer,
+    NoOpRelationshipInferencer,
 )
 from app.services.rerankers import CrossEncoderReranker, LlmReranker, NoOpReranker
 from app.services.search import (
@@ -129,10 +132,15 @@ def get_question_planner() -> QuestionPlanner:
     return HeuristicQuestionPlanner()
 
 
-def get_graph_sink() -> GraphSink:
-    if neo4j_available():
-        return Neo4jGraphSink()
-    return NullGraphSink()
+def get_relationship_inferencer() -> RelationshipInferencer:
+    settings = get_settings()
+    if settings.relationship_inferencer == "llm":
+        if settings.chat_llm_configured and not settings.use_mock_llm:
+            return LlmRelationshipInferencer(get_chat_completer(), fallback=CoLocationInferencer())
+        return CoLocationInferencer()
+    if settings.relationship_inferencer == "heuristic":
+        return CoLocationInferencer()
+    return NoOpRelationshipInferencer()
 
 
 def build_pipeline_services() -> PipelineServices:
@@ -143,7 +151,6 @@ def build_pipeline_services() -> PipelineServices:
     return PipelineServices(
         embedder=embedder,
         indexes=indexes,
-        graph=get_graph_sink(),
         extractor=AssessmentClaimExtractor(
             retriever,
             get_llm_extractor(),

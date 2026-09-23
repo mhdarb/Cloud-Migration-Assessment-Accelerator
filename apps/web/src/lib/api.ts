@@ -107,6 +107,7 @@ export type GraphOut = {
     label: string;
     confidence: number;
     attributes: Record<string, unknown>;
+    centrality: number;
   }[];
   edges: {
     id: string;
@@ -115,6 +116,7 @@ export type GraphOut = {
     relationship: string;
     confidence: number;
     needs_human_review: boolean;
+    rationale: string | null;
   }[];
 };
 
@@ -246,7 +248,6 @@ export type Health = {
   azure_openai: boolean;
   azure_search: boolean;
   database: string;
-  neo4j: boolean;
   rag: boolean;
   embeddings: string;
   vector_index?: string;

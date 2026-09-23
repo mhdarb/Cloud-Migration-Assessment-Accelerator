@@ -3,29 +3,35 @@ from __future__ import annotations
 from sqlalchemy.orm import Session
 
 from app.schemas.api import BlastRadiusOut, GraphEdge, GraphNode, GraphOut
-from app.services import neo4j_graph
+from app.services.graph_analytics import compute_centrality
 from app.services.inventory import InventorySnapshot, load_inventory
 
 
 def build_graph(db: Session, assessment_id: str) -> GraphOut:
-    """Prefer Neo4j knowledge graph; fall back to Postgres relational graph."""
-    neo = neo4j_graph.get_graph(assessment_id)
-    if neo is not None and (neo.nodes or neo.edges):
-        return neo
-    return _postgres_graph_from(load_inventory(db, assessment_id))
+    """The estate's dependency graph, built live from the reconciled Postgres entities/
+    edges -- there's no separate graph database to sync or fall back from."""
+    graph = _graph_from(load_inventory(db, assessment_id))
+    return _with_centrality(graph)
 
 
 def get_blast_radius(
     db: Session, assessment_id: str, node: str, depth: int = 2
 ) -> BlastRadiusOut:
-    neo = neo4j_graph.blast_radius(assessment_id, node, depth)
-    if neo is not None:
-        return neo
-    full = _postgres_graph_from(load_inventory(db, assessment_id))
+    full = _graph_from(load_inventory(db, assessment_id))
     return _bfs_blast(full, node, depth)
 
 
-def _postgres_graph_from(snap: InventorySnapshot) -> GraphOut:
+def _with_centrality(graph: GraphOut) -> GraphOut:
+    scores = compute_centrality(graph)
+    if not scores:
+        return graph
+    return GraphOut(
+        nodes=[n.model_copy(update={"centrality": scores.get(n.id, 0.0)}) for n in graph.nodes],
+        edges=graph.edges,
+    )
+
+
+def _graph_from(snap: InventorySnapshot) -> GraphOut:
     apps = snap.applications
     servers = snap.servers
     databases = snap.databases
@@ -75,6 +81,7 @@ def _postgres_graph_from(snap: InventorySnapshot) -> GraphOut:
                 relationship=e.rel_type,
                 confidence=e.confidence,
                 needs_human_review=e.needs_human_review,
+                rationale=e.rationale,
             )
         )
 

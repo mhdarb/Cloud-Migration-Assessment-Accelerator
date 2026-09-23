@@ -1,4 +1,4 @@
-"""Shared inventory queries for report, graph, Neo4j, and entity list."""
+"""Shared inventory queries for report, graph, and entity list."""
 
 from __future__ import annotations
 

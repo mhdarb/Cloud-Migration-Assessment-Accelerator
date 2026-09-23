@@ -1,13 +1,6 @@
 import type { Assessment, Claim, InfrastructureRecommendation } from "@/lib/api";
 import { PIPELINE_STAGES } from "@/lib/tabs";
-
-const IN_FLIGHT = new Set([
-  "ingesting",
-  "extracting",
-  "reconciling",
-  "building_graph",
-  "generating_report",
-]);
+import { isInFlight } from "@/lib/status";
 
 function Metric({ label, value }: { label: string; value: string | number }) {
   return (
@@ -35,12 +28,12 @@ export function OverviewTab({
 }) {
   const metrics = assessment.metrics || {};
   const reviewCount = claims.filter((c) => c.needs_human_review).length;
-  const graphSource = metrics.neo4j_synced ? "Neo4j" : "Postgres";
+  const inferredEdges = Number(metrics.inferred_edges || 0);
   const rag = String(metrics.retrieval_mode || (metrics.rag_queries ? "on" : "off"));
   const stageIdx = PIPELINE_STAGES.indexOf(
     assessment.status as (typeof PIPELINE_STAGES)[number]
   );
-  const docsLocked = busy || IN_FLIGHT.has(assessment.status);
+  const docsLocked = busy || isInFlight(assessment.status);
 
   return (
     <div className="grid gap-4 md:grid-cols-2">
@@ -132,7 +125,7 @@ export function OverviewTab({
           <Metric label="Recommendations" value={recommendations.length} />
           <Metric label="Review queue" value={reviewCount} />
           <Metric label="RAG" value={rag} />
-          <Metric label="Graph" value={String(graphSource)} />
+          <Metric label="Inferred edges" value={inferredEdges} />
         </div>
       </div>
     </div>

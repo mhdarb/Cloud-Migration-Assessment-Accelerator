@@ -106,8 +106,9 @@ export function GraphTab({
         onNodeSelect={(nodeId) => setBlastCenter(nodeId)}
       />
       <p className="sans text-xs text-[var(--muted)]">
-        Click a node or choose one above to inspect migration blast radius from the
-        Neo4j knowledge graph (Postgres fallback if Neo4j is down).
+        Click a node or choose one above to inspect migration blast radius. Border weight
+        reflects each component&apos;s centrality — how much of the estate touches it — and
+        dashed edges are inferred relationships flagged for review, not extracted facts.
       </p>
     </div>
   );

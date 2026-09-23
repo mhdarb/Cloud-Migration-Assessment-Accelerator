@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Smoke test: sample-data → pipeline → RAG metrics + Neo4j graph."""
+"""Smoke test: sample-data → pipeline → RAG metrics + dependency graph (Postgres-backed,
+with live-computed centrality and inferred relationships)."""
 
 from __future__ import annotations
 
@@ -28,7 +29,7 @@ def main() -> int:
     ]
     resp = client.post(
         f"{API}/assessments",
-        data={"name": "RAG Neo4j Smoke"},
+        data={"name": "RAG Graph Smoke"},
         files=files,
     )
     resp.raise_for_status()
@@ -59,6 +60,7 @@ def main() -> int:
     graph = client.get(f"{API}/assessments/{aid}/graph").json()
     print("graph nodes", len(graph["nodes"]), "edges", len(graph["edges"]))
     assert len(graph["nodes"]) >= 3, "expected graph nodes"
+    assert any(n["centrality"] > 0 for n in graph["nodes"]), "expected non-zero centrality somewhere"
 
     # pick an application node for blast radius
     center = next((n["id"] for n in graph["nodes"] if n["type"] == "application"), None)
@@ -76,11 +78,8 @@ def main() -> int:
     print(f"claims={len(claims)} cited={cited}")
     assert cited > 0, "expected cited claims"
 
-    if health.get("neo4j"):
-        assert metrics.get("neo4j_synced") in (True, 1, "true"), "expected neo4j sync when available"
-        print("Neo4j sync OK")
-    else:
-        print("Neo4j down — Postgres graph fallback used (acceptable)")
+    print("inferred_edges:", metrics.get("inferred_edges", 0))
+    print("blast source:", blast["source"])
 
     print("SMOKE OK")
     return 0

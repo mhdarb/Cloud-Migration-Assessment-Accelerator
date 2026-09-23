@@ -78,9 +78,7 @@ def main() -> int:
     graph = client.get(f"{API}/assessments/{aid}/graph").json()
     assert len(graph["nodes"]) >= 5
     print("graph", len(graph["nodes"]), "nodes", len(graph["edges"]), "edges")
-    if health.get("neo4j"):
-        assert metrics.get("neo4j_synced") in (True, 1, "true")
-        print("Neo4j sync OK")
+    print("inferred_edges:", metrics.get("inferred_edges", 0))
 
     report = client.get(f"{API}/assessments/{aid}/report").json()
     nfr_section = (report.get("inventory") or {}).get("nfr_and_runtime") or []
