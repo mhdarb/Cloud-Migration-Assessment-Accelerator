@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from sqlalchemy.orm import Session
@@ -31,7 +32,17 @@ def get_chunks_by_ids(db: Session, chunk_ids: list[str]) -> list[Chunk]:
 
 
 class FaissVectorIndex:
+    """Reads the on-disk index once per assessment and keeps it in memory for the rest of
+    this instance's lifetime -- a single extraction run can issue dozens of `search()`
+    calls (bounded by `AGENT_MAX_LLM_CALLS`) against data that never changes mid-run, so
+    re-reading and deserializing the index file from disk on every call is pure waste.
+    `BM25Retriever` already caches its corpus the same way; this closes the gap."""
+
     name = "faiss"
+
+    def __init__(self) -> None:
+        # assessment_id -> (index file mtime when loaded, faiss.Index, chunk_ids)
+        self._cache: dict[str, tuple[float, Any, list[str]]] = {}
 
     def upsert(
         self, assessment_id: str, chunks: list[Chunk], vectors: list[list[float]]
@@ -56,6 +67,11 @@ class FaissVectorIndex:
             ),
             encoding="utf-8",
         )
+        # upsert always fully replaces the index (see above) -- drop any cached copy so
+        # the next search() reloads it rather than serving stale results from before
+        # this write, on the off chance this instance's cache is still warm from an
+        # earlier round in the same run (e.g. a follow-up ingest of added documents).
+        self._cache.pop(assessment_id, None)
         return len(chunks)
 
     def search(
@@ -71,12 +87,22 @@ class FaissVectorIndex:
         meta_path = faiss_meta_path(assessment_id)
         index_path = faiss_index_path(assessment_id)
         if not meta_path.exists() or not index_path.exists():
+            self._cache.pop(assessment_id, None)
             return []
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        chunk_ids: list[str] = meta.get("chunk_ids") or []
-        if not chunk_ids:
-            return []
-        index = faiss.read_index(str(index_path))
+
+        mtime = index_path.stat().st_mtime
+        cached = self._cache.get(assessment_id)
+        if cached is not None and cached[0] == mtime:
+            index, chunk_ids = cached[1], cached[2]
+        else:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            chunk_ids = meta.get("chunk_ids") or []
+            if not chunk_ids:
+                self._cache.pop(assessment_id, None)
+                return []
+            index = faiss.read_index(str(index_path))
+            self._cache[assessment_id] = (mtime, index, chunk_ids)
+
         qvec = np.asarray([query_vector], dtype=np.float32)
         faiss.normalize_L2(qvec)
         k = min(top_k, len(chunk_ids))
@@ -90,6 +116,7 @@ class FaissVectorIndex:
         return get_chunks_by_ids(db, ids)
 
     def clear(self, assessment_id: str) -> None:
+        self._cache.pop(assessment_id, None)
         for path in (faiss_index_path(assessment_id), faiss_meta_path(assessment_id)):
             if path.exists():
                 path.unlink()

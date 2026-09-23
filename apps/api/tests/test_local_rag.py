@@ -211,3 +211,85 @@ def test_indexer_and_retriever_use_injected_ports(db_session, assessment, tmp_pa
         db_session, assessment.id, "FinanceDB", top_k=1
     )
     assert hits[0].id == chunk.id
+
+
+class _CountingEmbedder(_StubEmbedder):
+    """Same fixed token-vocab vectors as `_StubEmbedder`, but counts real embed_query
+    calls so tests can assert the cache is actually being hit."""
+
+    def __init__(self) -> None:
+        self.calls: dict[str, int] = {}
+
+    def embed_query(self, query: str) -> list[float]:
+        self.calls[query] = self.calls.get(query, 0) + 1
+        return super().embed_query(query)
+
+
+def test_merging_retriever_caches_query_embeddings_across_repeated_queries(
+    db_session, assessment, tmp_path
+):
+    doc = Document(
+        assessment_id=assessment.id,
+        filename="n.txt",
+        content_type="text/plain",
+        storage_path=str(tmp_path / "n.txt"),
+        doc_type=DocumentType.architecture,
+    )
+    db_session.add(doc)
+    db_session.flush()
+    chunk = Chunk(
+        assessment_id=assessment.id,
+        document_id=doc.id,
+        chunk_index=0,
+        page=1,
+        offset_start=0,
+        offset_end=20,
+        text="Oracle FinanceDB is the system of record.",
+    )
+    db_session.add(chunk)
+    db_session.commit()
+
+    embedder = _CountingEmbedder()
+    fake = _FakeIndex()
+    ChunkIndexer(embedder, [fake]).embed_and_index(db_session, assessment.id)
+
+    retriever = MergingRetriever(embedder, [fake], KeywordRetriever())
+    retriever.retrieve(db_session, assessment.id, "FinanceDB", top_k=1)
+    retriever.retrieve(db_session, assessment.id, "FinanceDB", top_k=1)
+    retriever.retrieve(db_session, assessment.id, "FinanceDB", top_k=1)
+
+    assert embedder.calls["FinanceDB"] == 1, "repeated queries should only embed once"
+
+
+def test_merging_retriever_embeds_distinct_queries_separately(db_session, assessment, tmp_path):
+    doc = Document(
+        assessment_id=assessment.id,
+        filename="n.txt",
+        content_type="text/plain",
+        storage_path=str(tmp_path / "n.txt"),
+        doc_type=DocumentType.architecture,
+    )
+    db_session.add(doc)
+    db_session.flush()
+    chunk = Chunk(
+        assessment_id=assessment.id,
+        document_id=doc.id,
+        chunk_index=0,
+        page=1,
+        offset_start=0,
+        offset_end=20,
+        text="Oracle FinanceDB is the system of record.",
+    )
+    db_session.add(chunk)
+    db_session.commit()
+
+    embedder = _CountingEmbedder()
+    fake = _FakeIndex()
+    ChunkIndexer(embedder, [fake]).embed_and_index(db_session, assessment.id)
+    embedder.calls.clear()  # indexing also runs chunk text through embed_query; not what's under test
+
+    retriever = MergingRetriever(embedder, [fake], KeywordRetriever())
+    retriever.retrieve(db_session, assessment.id, "FinanceDB", top_k=1)
+    retriever.retrieve(db_session, assessment.id, "billing service", top_k=1)
+
+    assert embedder.calls == {"FinanceDB": 1, "billing service": 1}

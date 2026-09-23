@@ -177,6 +177,20 @@ class MergingRetriever:
         self._keyword = keyword or KeywordRetriever()
         self._top_k = top_k
         self._fusion_candidates = fusion_candidates
+        self._query_vector_cache: dict[str, list[float]] = {}
+
+    def _embed_query_cached(self, query: str) -> list[float]:
+        """A query's embedding depends only on its text, not the assessment being
+        searched -- cache it per retriever instance so a run that issues the same or a
+        repeated query (skills, gap follow-ups, custom questions) doesn't pay for a
+        second embedding call. Matters most for network-bound embedders (Azure OpenAI);
+        harmless overhead for local MiniLM."""
+        cached = self._query_vector_cache.get(query)
+        if cached is not None:
+            return cached
+        vector = self._embedder.embed_query(query)
+        self._query_vector_cache[query] = vector
+        return vector
 
     def retrieve(
         self,
@@ -191,7 +205,7 @@ class MergingRetriever:
             return self._retrieve_waterfall(db, assessment_id, query, k)
 
         candidates = self._fusion_candidates or max(k * 4, 20)
-        query_vector = self._embedder.embed_query(query)
+        query_vector = self._embed_query_cached(query)
         by_id: dict[str, Chunk] = {}
         ranked_lists: list[list[str]] = []
 
@@ -229,7 +243,7 @@ class MergingRetriever:
         self, db: Session, assessment_id: str, query: str, k: int
     ) -> list[Chunk]:
         """Pre-hybrid fallback: vector index(es) in order, keyword only backfills to k."""
-        query_vector = self._embedder.embed_query(query)
+        query_vector = self._embed_query_cached(query)
         ordered: list[Chunk] = []
         seen: set[str] = set()
         for index in self._indexes:
