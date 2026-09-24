@@ -7,6 +7,8 @@ import { useAssessment } from "@/hooks/useAssessment";
 import { parseTab, TABS, type Tab } from "@/lib/tabs";
 import { isInFlight } from "@/lib/status";
 import { StatusBadge } from "@/components/StatusBadge";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { ErrorBanner } from "@/components/ErrorBanner";
 import { OverviewTab } from "@/components/assessment/OverviewTab";
 import { QuestionsTab } from "@/components/assessment/QuestionsTab";
 import { SizingTab } from "@/components/assessment/SizingTab";
@@ -46,6 +48,7 @@ function AssessmentDetail() {
 
   const [editing, setEditing] = useState(false);
   const [draftName, setDraftName] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const setTab = (next: Tab) => {
     router.replace(`/assessments/${id}?tab=${next}`, { scroll: false });
@@ -122,14 +125,7 @@ function AssessmentDetail() {
           <button
             className="btn btn-secondary"
             disabled={busy || isInFlight(assessment.status)}
-            onClick={() => {
-              if (!window.confirm(`Delete “${assessment.name}”? This cannot be undone.`)) {
-                return;
-              }
-              void onDeleteAssessment().then((ok) => {
-                if (ok) router.push("/");
-              });
-            }}
+            onClick={() => setConfirmDelete(true)}
           >
             Delete
           </button>
@@ -149,11 +145,7 @@ function AssessmentDetail() {
           {assessment.error_message}
         </div>
       )}
-      {error && (
-        <div className="rounded-lg bg-red-50 px-4 py-3 sans text-sm text-red-700">
-          {error}
-        </div>
-      )}
+      {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
 
       <div className="flex flex-wrap gap-1 border-b border-[var(--border)]">
         {TABS.map((t) => (
@@ -200,6 +192,20 @@ function AssessmentDetail() {
           onAddFollowUp={onAddFollowUp}
         />
       )}
+      <ConfirmDialog
+        open={confirmDelete}
+        title="Delete assessment"
+        message={`Delete "${assessment.name}"? This cannot be undone.`}
+        confirmLabel="Delete"
+        danger
+        onCancel={() => setConfirmDelete(false)}
+        onConfirm={() => {
+          setConfirmDelete(false);
+          void onDeleteAssessment().then((ok) => {
+            if (ok) router.push("/");
+          });
+        }}
+      />
     </div>
   );
 }

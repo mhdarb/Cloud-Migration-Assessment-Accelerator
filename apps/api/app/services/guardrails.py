@@ -288,10 +288,13 @@ def guard_extract_input(
         report.sanitized_query = " ".join(cleaned.split())
         report.note("input", "sanitize", "prompt_injection_query", q_signals[0].detail)
 
-    # Sample chunk texts for injection / harm (cap work)
+    # Sample chunk texts for injection / harm (cap work). parent_context is raw
+    # same-document text too (see heuristic_extract.chunks_to_payload/_spotlight_chunks)
+    # and reaches the same prompt, so it needs the same scan coverage as text itself.
     sample_texts: list[str] = []
     for item in chunk_payload[:12]:
         sample_texts.append(str(item.get("text") or "")[:2000])
+        sample_texts.append(str(item.get("parent_context") or "")[:2000])
     blob = "\n".join(sample_texts)
 
     c_signals = detector.scan(blob)
@@ -310,6 +313,11 @@ def guard_extract_input(
             for pat in _INJECTION_PATTERNS:
                 text = pat.sub(" ", text)
             cleaned_item["text"] = " ".join(text.split())
+            if item.get("parent_context"):
+                context = str(item["parent_context"])
+                for pat in _INJECTION_PATTERNS:
+                    context = pat.sub(" ", context)
+                cleaned_item["parent_context"] = " ".join(context.split())
             sanitized_items.append(cleaned_item)
         report.sanitized_chunk_payload = sanitized_items
         report.note("input", "sanitize", "prompt_injection_chunks", c_signals[0].detail)

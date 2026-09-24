@@ -1,6 +1,10 @@
-import type { Assessment, Claim, InfrastructureRecommendation } from "@/lib/api";
+"use client";
+
+import { useState } from "react";
+import type { Assessment, Claim, DocumentOut, InfrastructureRecommendation } from "@/lib/api";
 import { PIPELINE_STAGES } from "@/lib/tabs";
 import { isInFlight } from "@/lib/status";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 
 function Metric({ label, value }: { label: string; value: string | number }) {
   return (
@@ -26,6 +30,7 @@ export function OverviewTab({
   onAddDocuments: (files: File[]) => void;
   onRemoveDocument: (documentId: string) => void;
 }) {
+  const [pendingRemove, setPendingRemove] = useState<DocumentOut | null>(null);
   const metrics = assessment.metrics || {};
   const reviewCount = claims.filter((c) => c.needs_human_review).length;
   const inferredEdges = Number(metrics.inferred_edges || 0);
@@ -86,12 +91,7 @@ export function OverviewTab({
                 type="button"
                 className="btn btn-secondary"
                 disabled={docsLocked}
-                onClick={() => {
-                  if (!window.confirm(`Remove ${d.filename}? The pipeline will re-run if other documents remain.`)) {
-                    return;
-                  }
-                  onRemoveDocument(d.id);
-                }}
+                onClick={() => setPendingRemove(d)}
               >
                 Remove
               </button>
@@ -128,6 +128,19 @@ export function OverviewTab({
           <Metric label="Inferred edges" value={inferredEdges} />
         </div>
       </div>
+      <ConfirmDialog
+        open={pendingRemove !== null}
+        title="Remove document"
+        message={`Remove ${pendingRemove?.filename}? The pipeline will re-run if other documents remain.`}
+        confirmLabel="Remove"
+        danger
+        onCancel={() => setPendingRemove(null)}
+        onConfirm={() => {
+          const doc = pendingRemove;
+          setPendingRemove(null);
+          if (doc) onRemoveDocument(doc.id);
+        }}
+      />
     </div>
   );
 }

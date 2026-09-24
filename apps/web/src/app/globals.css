@@ -58,6 +58,11 @@ body {
   color: var(--foreground);
 }
 
+.btn-danger {
+  background: var(--danger);
+  color: white;
+}
+
 .badge {
   display: inline-flex;
   align-items: center;

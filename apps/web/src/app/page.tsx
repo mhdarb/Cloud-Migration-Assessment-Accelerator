@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api, AssessmentListItem, Health, llmLabel } from "@/lib/api";
 import { StatusBadge } from "@/components/StatusBadge";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { ErrorBanner } from "@/components/ErrorBanner";
 import { isInFlight, isTerminal } from "@/lib/status";
 
 export default function HomePage() {
@@ -18,6 +20,9 @@ export default function HomePage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [sortBy, setSortBy] = useState<"updated" | "name" | "status">("updated");
+  const [pendingDelete, setPendingDelete] = useState<AssessmentListItem | null>(null);
 
   const refresh = async () => {
     try {
@@ -77,7 +82,6 @@ export default function HomePage() {
   };
 
   const deleteItem = async (item: AssessmentListItem) => {
-    if (!window.confirm(`Delete “${item.name}”? This cannot be undone.`)) return;
     setBusyId(item.id);
     setError(null);
     try {
@@ -89,6 +93,16 @@ export default function HomePage() {
       setBusyId(null);
     }
   };
+
+  const visibleItems = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const filtered = q ? items.filter((i) => i.name.toLowerCase().includes(q)) : items;
+    const sorted = [...filtered];
+    if (sortBy === "name") sorted.sort((a, b) => a.name.localeCompare(b.name));
+    else if (sortBy === "status") sorted.sort((a, b) => a.status.localeCompare(b.status));
+    else sorted.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+    return sorted;
+  }, [items, search, sortBy]);
 
   return (
     <div className="space-y-8">
@@ -129,11 +143,7 @@ export default function HomePage() {
               application ZIP (package.json, pom.xml, Dockerfile, etc.). Max 50MB per file.
             </p>
           </div>
-          {error && (
-            <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
-              {error}
-            </div>
-          )}
+          {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
           <button className="btn btn-primary" disabled={loading} type="submit">
             {loading ? "Starting pipeline…" : "Create & run assessment"}
           </button>
@@ -152,11 +162,32 @@ export default function HomePage() {
       </section>
 
       <section>
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-xl">Recent assessments</h2>
-          <button className="btn btn-secondary" onClick={refresh} type="button">
-            Refresh
-          </button>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-xl">
+            Recent assessments
+            {items.length ? ` (${visibleItems.length}/${items.length})` : ""}
+          </h2>
+          <div className="sans flex flex-wrap items-center gap-2 text-sm">
+            <input
+              className="input"
+              type="search"
+              placeholder="Search by name…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            <select
+              className="input"
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+            >
+              <option value="updated">Sort: recently updated</option>
+              <option value="name">Sort: name</option>
+              <option value="status">Sort: status</option>
+            </select>
+            <button className="btn btn-secondary" onClick={refresh} type="button">
+              Refresh
+            </button>
+          </div>
         </div>
         <div className="card overflow-hidden">
           <table className="sans w-full text-left text-sm">
@@ -178,7 +209,14 @@ export default function HomePage() {
                   </td>
                 </tr>
               )}
-              {items.map((item) => (
+              {items.length > 0 && visibleItems.length === 0 && (
+                <tr>
+                  <td className="px-4 py-6 text-[var(--muted)]" colSpan={6}>
+                    No assessments match your search.
+                  </td>
+                </tr>
+              )}
+              {visibleItems.map((item) => (
                 <tr key={item.id} className="border-t border-[var(--border)] hover:bg-[#faf9f7]">
                   <td className="px-4 py-3 font-medium">
                     {editingId === item.id ? (
@@ -248,7 +286,7 @@ export default function HomePage() {
                         type="button"
                         className="btn btn-secondary"
                         disabled={busyId === item.id || isInFlight(item.status)}
-                        onClick={() => void deleteItem(item)}
+                        onClick={() => setPendingDelete(item)}
                       >
                         Delete
                       </button>
@@ -260,6 +298,19 @@ export default function HomePage() {
           </table>
         </div>
       </section>
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title="Delete assessment"
+        message={`Delete "${pendingDelete?.name}"? This cannot be undone.`}
+        confirmLabel="Delete"
+        danger
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={() => {
+          const item = pendingDelete;
+          setPendingDelete(null);
+          if (item) void deleteItem(item);
+        }}
+      />
     </div>
   );
 }

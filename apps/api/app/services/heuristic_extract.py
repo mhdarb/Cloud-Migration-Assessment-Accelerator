@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from sqlalchemy.orm import Session
+
 from app.models.entities import Chunk, Document, DocumentType
 from app.schemas.api import ExtractedClaim, ExtractedDependency, ExtractionResult
 from app.schemas.chunking import ChunkPayload
@@ -26,10 +28,64 @@ def chunks_from_payload(
     ]
 
 
-def chunks_to_payload(chunks: list[Chunk], text_limit_tokens: int = 400) -> list[dict[str, Any]]:
+def _fetch_sibling_map(
+    db: Session, chunks: list[Chunk], *, radius: int
+) -> dict[str, list[Chunk]]:
+    """One batched query for every chunk's same-document neighbors within `radius`
+    chunk_index positions, instead of a separate lookup per chunk -- cheap at this app's
+    per-assessment chunk-count scale (dozens to low hundreds, not thousands)."""
+    doc_ids = {c.document_id for c in chunks if c.document_id}
+    if not doc_ids:
+        return {}
+    all_in_docs = (
+        db.query(Chunk)
+        .filter(Chunk.document_id.in_(doc_ids))
+        .order_by(Chunk.document_id, Chunk.chunk_index)
+        .all()
+    )
+    by_doc: dict[str, list[Chunk]] = {}
+    for c in all_in_docs:
+        by_doc.setdefault(c.document_id, []).append(c)
+
+    result: dict[str, list[Chunk]] = {}
+    for chunk in chunks:
+        doc_chunks = by_doc.get(chunk.document_id, [])
+        result[chunk.id] = [
+            c
+            for c in doc_chunks
+            if c.id != chunk.id and abs(c.chunk_index - chunk.chunk_index) <= radius
+        ]
+    return result
+
+
+def _format_parent_context(chunk: Chunk, siblings: list[Chunk], max_chars: int) -> str:
+    parts = []
+    for sib in sorted(siblings, key=lambda c: c.chunk_index):
+        text = (sib.text or "").strip()
+        if text:
+            label = "before" if sib.chunk_index < chunk.chunk_index else "after"
+            parts.append(f"[{label}] {text}")
+    return "\n".join(parts)[:max_chars]
+
+
+def chunks_to_payload(
+    chunks: list[Chunk], text_limit_tokens: int = 400, *, db: Session | None = None
+) -> list[dict[str, Any]]:
+    """`db` is optional (tests and other callers that don't need broader interpretive
+    context can omit it) -- when given, each chunk also gets a `parent_context`: a bounded
+    window of its same-document neighbors, visible to the extractor for interpretation but
+    never independently citable (it isn't attached to its own chunk_id, so a claim can
+    only be grounded in the chunk's own `text`, exactly as before)."""
+    from app.config import get_settings
     from app.services.chunkers import _get_encoding, _window_by_tokens
 
+    settings = get_settings()
     enc = _get_encoding()
+    sibling_map = (
+        _fetch_sibling_map(db, chunks, radius=settings.parent_context_radius)
+        if db is not None and settings.parent_context_enabled
+        else {}
+    )
     payload: list[dict[str, Any]] = []
     for chunk in chunks:
         text = chunk.text or ""
@@ -44,6 +100,13 @@ def chunks_to_payload(chunks: list[Chunk], text_limit_tokens: int = 400) -> list
         for key in ("section_title", "row_range", "qa_index", "file_path"):
             if key in meta:
                 item[key] = meta[key]
+        siblings = sibling_map.get(chunk.id)
+        if siblings:
+            parent_context = _format_parent_context(
+                chunk, siblings, settings.parent_context_max_chars
+            )
+            if parent_context:
+                item["parent_context"] = parent_context
         payload.append(item)
     return payload
 
@@ -122,6 +185,15 @@ _NFR_PATTERNS = [
     (re.compile(r"peak load[:\s]+([^\n.]{2,60})", re.I), "scalability"),
     (re.compile(r"concurrent users[:\s]+([^\n.]{2,40})", re.I), "scalability"),
 ]
+# A table row that states RTO and RPO together in one cell (e.g. a DOCX table rendered as
+# "RTO / RPO | 1 hour / 30 minutes") -- the generic RTO/RPO patterns above have no way to
+# split a combined label from a combined value, so on their own they'd each capture the
+# whole ragged remainder ("rto" ending up as "/ RPO | 1 hour / 30 minutes"). Matched first;
+# any generic RTO/RPO match inside the same span is then skipped in extract_nfr_claims.
+_RTO_RPO_COMBINED = re.compile(
+    r"RTO\s*/\s*RPO[:\s|]+([^/\n]{2,40}?)\s*/\s*([^\n,.;|]{2,40})",
+    re.I,
+)
 _CRITICALITY_LEVEL = re.compile(r"\b(high|medium|low)\b", re.I)
 
 def normalize_key(name: str) -> str:
@@ -555,9 +627,38 @@ def heuristic_extract(chunks: list[Chunk], docs: dict[str, Document]) -> Extract
 def extract_nfr_claims(text: str, chunk_id: str) -> list[ExtractedClaim]:
     """Offline NFR/SLA/compliance extractors for requirements-style prose."""
     out: list[ExtractedClaim] = []
+    consumed_spans: list[tuple[int, int]] = []
+
+    for m in _RTO_RPO_COMBINED.finditer(text):
+        rto_value = m.group(1).strip(" .;:|")
+        rpo_value = m.group(2).strip(" .;:|")
+        if len(rto_value) >= 2:
+            out.append(
+                make_claim(
+                    "business", "migration-requirements", "rto", rto_value[:200],
+                    chunk_id=chunk_id, quote=m.group(0),
+                )
+            )
+        if len(rpo_value) >= 2:
+            out.append(
+                make_claim(
+                    "business", "migration-requirements", "rpo", rpo_value[:200],
+                    chunk_id=chunk_id, quote=m.group(0),
+                )
+            )
+        consumed_spans.append(m.span())
+
     for pattern, attr in _NFR_PATTERNS:
         for m in pattern.finditer(text):
-            value = m.group(1).strip(" .;:")
+            if attr in ("rto", "rpo") and any(
+                start <= m.start() < end for start, end in consumed_spans
+            ):
+                continue  # already extracted, correctly split, by _RTO_RPO_COMBINED above
+            # Strip a stray leading/trailing "|" too -- these patterns run over
+            # pipe-delimited table rows (parsers._parse_docx/openpyxl), and a separator
+            # that's "|" rather than ":"/whitespace otherwise ends up inside the capture
+            # (e.g. "concurrent users | ~9,500" -> "| ~9,500" without this).
+            value = m.group(1).strip(" .;:|")
             if len(value) < 2:
                 continue
             out.append(

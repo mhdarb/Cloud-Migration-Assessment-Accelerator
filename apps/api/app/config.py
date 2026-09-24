@@ -79,6 +79,13 @@ class Settings(BaseSettings):
     chunk_overlap_tokens: int = 80
     chunk_inventory_rows: int = 20
 
+    # Parent-child chunking: retrieval stays on the precise (child) chunk; the extractor
+    # additionally sees a bounded window of same-document neighbors for interpretation --
+    # never independently citable, so evidence-quote grounding is unaffected.
+    parent_context_enabled: bool = True
+    parent_context_radius: int = 1
+    parent_context_max_chars: int = 600
+
     # Retrieval (P1)
     vector_score_threshold: float = 0.02
     retrieval_hybrid_enabled: bool = True

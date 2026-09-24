@@ -20,3 +20,4 @@ class ChunkPayload(TypedDict):
     row_range: NotRequired[list[int]]
     qa_index: NotRequired[int]
     file_path: NotRequired[str]
+    parent_context: NotRequired[str]

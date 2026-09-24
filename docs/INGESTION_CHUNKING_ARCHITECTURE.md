@@ -243,6 +243,26 @@ isolation:
   naming the actual servers, without widening what untrusted content
   reaches the model.
 
+**Parent-child chunking** (`heuristic_extract.chunks_to_payload`, run at
+payload-build time — i.e. per retrieval, not per document like the two
+signals above) is the extraction-side counterpart to `embed_context`:
+retrieval still matches on the precise (child) chunk, but each retrieved
+chunk's payload additionally gets a `parent_context` — a bounded window
+(`PARENT_CONTEXT_RADIUS` chunk_index positions either side, capped at
+`PARENT_CONTEXT_MAX_CHARS`, default settings both on) of its *same-document*
+neighbors, fetched in one batched query (`_fetch_sibling_map`) across the
+whole retrieved set rather than one query per chunk. Unlike `embed_context`,
+this **is** shown to the LLM — `llm_extractors._spotlight_chunks` renders it
+inside the `<chunk>` fence, explicitly labeled "for interpretation only,"
+and it goes through the identical `_neutralize_nested_tags` fence-escape and
+`guardrails.guard_extract_input` injection scan/sanitize as the chunk's own
+`text` (extending both, since this is a second surface of raw document
+content reaching the prompt). It never gets its own `chunk_id` in the
+payload, so `citations.validate_citations` still only ever grounds a quote
+against the *child* chunk's own `text` — parent context can help the model
+correctly interpret a dangling reference, but can never itself become the
+cited evidence.
+
 ### 4. Persistence
 
 Each `ChunkPiece` (`page`, `offset_start`, `offset_end`, `text`, `metadata`)
@@ -290,9 +310,10 @@ in `.zip` — calls `_ingest_code_snapshot`, which:
 | [`chunkers.py`](../apps/api/app/services/chunkers.py) | All chunking strategies; shape guard; table summary; adaptive row grouping; sentence-aware oversized-block splitting; context annotation; `DocumentChunker` router |
 | [`classify.py`](../apps/api/app/services/classify.py) | `DocClassifier` implementations (`KeywordClassifier`, `LlmClassifier`) |
 | [`code_manifests.py`](../apps/api/app/services/code_manifests.py) | Safe ZIP extraction, manifest file discovery, deterministic dependency parsing |
-| [`heuristic_extract.py`](../apps/api/app/services/heuristic_extract.py) | `_canonical_header` alias table shared with the table-summary builder; `chunks_to_payload` forwards `section_title` into the LLM-facing payload |
+| [`heuristic_extract.py`](../apps/api/app/services/heuristic_extract.py) | `_canonical_header` alias table shared with the table-summary builder; `chunks_to_payload` forwards `section_title`, builds `parent_context` (parent-child chunking) via batched sibling lookup |
 | [`search.py`](../apps/api/app/services/search.py) | `chunk_search_text` folds `embed_context` into what's embedded/indexed, without touching `Chunk.text` |
-| [`llm_extractors.py`](../apps/api/app/services/llm_extractors.py) | `_spotlight_chunks` renders `section_title` inside the fenced `<chunk>` block sent to the LLM |
+| [`llm_extractors.py`](../apps/api/app/services/llm_extractors.py) | `_spotlight_chunks` renders `section_title` and `parent_context` inside the fenced `<chunk>` block sent to the LLM |
+| [`guardrails.py`](../apps/api/app/services/guardrails.py) | `guard_extract_input` scans/sanitizes `parent_context` identically to chunk `text` |
 
 ## Tests
 
@@ -301,6 +322,7 @@ in `.zip` — calls `_ingest_code_snapshot`, which:
 | [`test_chunkers.py`](../apps/api/tests/test_chunkers.py) | Row-grouping (adaptive token budget + row-count cap), summary aggregates, shape guard (ragged columns, hidden header), sentence-aware oversized-paragraph splitting, `section_title`/`embed_context` annotation, Q/A splitting, manifest-file chunking, doc-type routing |
 | [`test_docx_tables.py`](../apps/api/tests/test_docx_tables.py) | DOCX document-order preservation, empty-cell alignment, embedded-table chunking + summary, embedded shape-guard fallback |
 | [`test_local_rag.py`](../apps/api/tests/test_local_rag.py) | `chunk_search_text`; a dangling-reference prose chunk becoming retrievable via its `embed_context` lookback |
-| [`test_llm_reasoning.py`](../apps/api/tests/test_llm_reasoning.py) | `_spotlight_chunks` renders `section_title` and neutralizes injection-like content in it |
-| [`test_heuristic_extract.py`](../apps/api/tests/test_heuristic_extract.py) | `chunks_to_payload` forwards `section_title` from chunk metadata |
+| [`test_llm_reasoning.py`](../apps/api/tests/test_llm_reasoning.py) | `_spotlight_chunks` renders `section_title` and `parent_context`, neutralizes injection-like content in both |
+| [`test_heuristic_extract.py`](../apps/api/tests/test_heuristic_extract.py) | `chunks_to_payload` forwards `section_title`; parent-child sibling lookup (radius, cross-document exclusion, `db`-optional backward compat, `PARENT_CONTEXT_ENABLED` toggle) |
+| [`test_guardrails.py`](../apps/api/tests/test_guardrails.py) | `guard_extract_input` detects and sanitizes injection in `parent_context` the same as `text` |
 | [`test_golden_extraction.py`](../apps/api/tests/test_golden_extraction.py) | End-to-end regression over real Contoso sample data, including a retrieval probe that a "total vCPU" query surfaces the computed `table_summary` chunk |

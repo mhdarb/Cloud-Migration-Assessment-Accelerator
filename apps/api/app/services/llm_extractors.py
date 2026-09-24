@@ -33,7 +33,16 @@ def _spotlight_chunks(chunk_payload: list[ChunkPayload]) -> str:
     line inside the fence — it's built only from doc-type/structural metadata, never raw
     document content, so unlike the chunk's own text it needs no injection scanning of its
     own. It gives the model a hint of where an isolated chunk sits (e.g. "architecture —
-    part 3 of 8") without widening what untrusted content reaches the prompt."""
+    part 3 of 8") without widening what untrusted content reaches the prompt.
+
+    `parent_context` (set by `heuristic_extract.chunks_to_payload` when `db` is given) is
+    a bounded window of the chunk's same-document neighbors — parent-child chunking:
+    retrieval stays on the precise chunk, but the extractor also sees enough surrounding
+    text to resolve a dangling reference ("the above servers") correctly. Unlike
+    `section_title`, this *is* raw document content, so it goes through the same
+    `_neutralize_nested_tags` fence-escape as the chunk's own text, and `guard_extract_input`
+    scans/sanitizes it identically to `text` — it just never gets its own chunk_id, so a
+    claim can still only be grounded in the chunk's own text below it, not the context."""
     parts = []
     for item in chunk_payload:
         cid = item.get("chunk_id", "")
@@ -41,6 +50,13 @@ def _spotlight_chunks(chunk_payload: list[ChunkPayload]) -> str:
         section = item.get("section_title")
         if section:
             body_lines.append(f"[{_neutralize_nested_tags(str(section))}]")
+        parent_context = item.get("parent_context")
+        if parent_context:
+            body_lines.append(
+                "[surrounding context, for interpretation only — evidence must be quoted "
+                "from the chunk text below, not from this context]\n"
+                + _neutralize_nested_tags(str(parent_context))
+            )
         body_lines.append(_neutralize_nested_tags(item.get("text", "")))
         text = "\n".join(body_lines)
         parts.append(f'<chunk id="{cid}">\n{text}\n</chunk>')

@@ -210,7 +210,7 @@ def build_mock_extract_graph(db: Session, docs: dict[str, Document], _retriever:
         for c in _boost_chunks(db, state["assessment_id"]):
             retrieved[c.id] = c
         chunks = list(retrieved.values())
-        payload = chunks_to_payload(chunks)
+        payload = chunks_to_payload(chunks, db=db)
         return {
             "chunk_ids": list(retrieved.keys()),
             "chunk_texts": {cid: c.text for cid, c in retrieved.items()},
@@ -324,7 +324,7 @@ def build_llm_extract_graph(
             db, state["assessment_id"], query, top_k=settings.rag_top_k
         )
         texts = {c.id: c.text for c in chunks}
-        payload = chunks_to_payload(chunks)
+        payload = chunks_to_payload(chunks, db=db)
         return {
             "chunk_ids": [c.id for c in chunks],
             "chunk_texts": texts,
