@@ -133,6 +133,27 @@ def _flag_shape_guard_failures(
         )
 
 
+def _cap_chunks(
+    doc: Document, pieces: list[ChunkPiece], result: IngestResult
+) -> list[ChunkPiece]:
+    """Bound how many chunks a single document can contribute. A pathologically large or
+    adversarial upload could otherwise generate tens of thousands of embedding calls and
+    DB rows; past the cap we keep the leading chunks and surface the truncation as a gap."""
+    cap = get_settings().max_chunks_per_doc
+    if len(pieces) <= cap:
+        return pieces
+    result.manifest_extractions.append(
+        ExtractionResult(
+            gaps=[
+                f"'{doc.filename}' produced {len(pieces)} chunks, over the {cap} limit "
+                f"(MAX_CHUNKS_PER_DOC); only the first {cap} were ingested — some content "
+                "was not indexed."
+            ]
+        )
+    )
+    return pieces[:cap]
+
+
 def _ingest_one(
     db: Session, assessment_id: str, doc: Document, result: IngestResult
 ) -> None:
@@ -149,6 +170,10 @@ def _ingest_one(
         return
 
     doc.doc_type = parsed.doc_type
+    if parsed.warnings:
+        # Scanned/empty pages, resource-cap truncation, recoverable format issues — make
+        # each visible as a report gap instead of a silently degraded parse.
+        result.manifest_extractions.append(ExtractionResult(gaps=list(parsed.warnings)))
     if not doc.filename.lower().endswith(".zip"):
         # Zip -> code_snapshot is unambiguous from the extension alone; classifying
         # it would just waste an LLM call for zero decision value.
@@ -157,6 +182,7 @@ def _ingest_one(
     doc.page_count = parsed.page_count
     doc.parse_summary = parsed.summary
     pieces = DocumentChunker().chunk(parsed.pages, doc_type=parsed.doc_type, filename=doc.filename)
+    pieces = _cap_chunks(doc, pieces, result)
     _flag_shape_guard_failures(doc, pieces, result)
     chunk_index = 0
     for piece in pieces:

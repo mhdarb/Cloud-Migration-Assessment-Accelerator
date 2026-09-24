@@ -79,6 +79,27 @@ class Settings(BaseSettings):
     chunk_overlap_tokens: int = 80
     chunk_inventory_rows: int = 20
 
+    # Parsing robustness (P0/P1/P2): guardrails so "any document" degrades to a visible
+    # gap instead of silent data loss, an OOM, or a runaway chunk count.
+    #
+    # A parsed doc yielding fewer than this many characters per page is treated as
+    # empty/scanned and surfaced as a report gap rather than accepted as zero content.
+    min_chars_per_page: int = 8
+    # OCR fallback for image-only/scanned PDF pages. Off by default: it needs the optional
+    # `pytesseract` package AND a system `tesseract` binary. When either is missing the
+    # code degrades to the empty-extraction gap above -- it never hard-fails ingest.
+    ocr_enabled: bool = False
+    ocr_language: str = "eng"
+    # Use `pdfplumber` (when installed) to pull structured tables out of PDFs and emit the
+    # same <<TABLE>> blocks docx does, so inventory-in-PDF gets row/summary chunking.
+    # Falls back to plain `pypdf` text extraction when pdfplumber is unavailable.
+    pdf_table_extraction: bool = True
+    # Resource caps -- exceed one and the document is truncated with a surfaced gap.
+    max_file_mb: float = 100.0
+    max_pages_per_doc: int = 5000
+    max_rows_per_sheet: int = 200000
+    max_chunks_per_doc: int = 20000
+
     # Parent-child chunking: retrieval stays on the precise (child) chunk; the extractor
     # additionally sees a bounded window of same-document neighbors for interpretation --
     # never independently citable, so evidence-quote grounding is unaffected.

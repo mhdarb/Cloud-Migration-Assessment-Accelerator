@@ -51,12 +51,112 @@ def _count_tokens(text: str, enc) -> int:
     return max(1, len(text) // _CHARS_PER_TOKEN_ESTIMATE)
 
 
-_SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+")
+# Split after Western terminators followed by whitespace, OR after a CJK terminator
+# (。！？；) which is written with no trailing space — without the CJK arm a Chinese/
+# Japanese page reads as one giant "sentence" and always falls to the raw token cut.
+_SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+|(?<=[。！？；])")
 
 
 def _split_sentences(text: str) -> list[str]:
     parts = [s.strip() for s in _SENTENCE_BOUNDARY.split(text) if s.strip()]
     return parts if len(parts) > 1 else [text]
+
+
+def _paragraph_spans(text: str, base: int = 0) -> list[tuple[str, int, int]]:
+    """Paragraphs split on blank lines, each with its real (start, end) character offset in
+    `text` (shifted by `base`). Unlike a running length counter, these offsets point back
+    into the actual source, so a retrieved chunk can be located/highlighted in the original
+    document. Paragraphs are non-overlapping substrings, so a forward-only `find` is exact."""
+    spans: list[tuple[str, int, int]] = []
+    cursor = 0
+    for block in re.split(r"\n\s*\n", text):
+        stripped = block.strip()
+        if not stripped:
+            continue
+        start = text.find(stripped, cursor)
+        if start < 0:
+            start = cursor
+        end = start + len(stripped)
+        cursor = end
+        spans.append((stripped, base + start, base + end))
+    if not spans:
+        s = text.strip()
+        return [(s, base, base + len(s))] if s else []
+    return spans
+
+
+def _pack_spans(
+    spans: list[tuple[str, int, int]], size_tokens: int, overlap_tokens: int, enc
+) -> list[tuple[str, int, int]]:
+    """Greedily pack (text, start, end) paragraph spans into token-bounded chunks, tracking
+    real source offsets. Chunk boundaries match `_pack_blocks` exactly (so behavior is
+    unchanged); only the offsets are now genuine. An oversized paragraph is token-windowed,
+    and each of its sub-pieces inherits that paragraph's span."""
+    results: list[tuple[str, int, int]] = []
+    buffer: list[tuple[str, int, int]] = []
+    buf_tokens = 0
+
+    def flush() -> None:
+        nonlocal buffer, buf_tokens
+        if buffer:
+            results.append(("\n\n".join(b[0] for b in buffer), buffer[0][1], buffer[-1][2]))
+            buffer, buf_tokens = [], 0
+
+    for btext, bstart, bend in spans:
+        block_tokens = _count_tokens(btext, enc)
+        if block_tokens > size_tokens:
+            flush()
+            for piece in _window_by_tokens(btext, size_tokens, overlap_tokens, enc):
+                results.append((piece, bstart, bend))
+            continue
+        if buffer and buf_tokens + block_tokens > size_tokens:
+            flush()
+        buffer.append((btext, bstart, bend))
+        buf_tokens += block_tokens
+    flush()
+    return results
+
+
+def _overlap_tail(text: str, overlap_tokens: int, enc) -> str:
+    """Trailing ~`overlap_tokens` slice of `text`, cut on a sentence boundary so the context
+    carried into the next chunk reads cleanly. Empty when overlap is disabled."""
+    if overlap_tokens <= 0 or not text.strip():
+        return ""
+    sentences = _split_sentences(text)
+    tail: list[str] = []
+    tokens = 0
+    for sentence in reversed(sentences):
+        stoks = _count_tokens(sentence, enc)
+        if tail and tokens + stoks > overlap_tokens:
+            break
+        tail.insert(0, sentence)
+        tokens += stoks
+        if tokens >= overlap_tokens:
+            break
+    # A single-chunk page has nothing to carry into — its whole text would just be its own
+    # overlap, so return nothing in that case.
+    return " ".join(tail).strip() if len(tail) < len(sentences) else ""
+
+
+def _apply_prose_overlap(
+    packed: list[tuple[str, int, int]], overlap_tokens: int, enc
+) -> list[tuple[str, int, int]]:
+    """Prepend each chunk (after the first) with the trailing sentences of the previous
+    chunk, so a fact split across a paragraph boundary survives in at least one chunk. The
+    offset start is pulled back to reflect the carried region, so overlapping chunks report
+    overlapping source spans — the correct meaning of overlap."""
+    if overlap_tokens <= 0 or len(packed) < 2:
+        return packed
+    out: list[tuple[str, int, int]] = []
+    for i, (text, start, end) in enumerate(packed):
+        if i > 0:
+            prev_text, _, prev_end = packed[i - 1]
+            tail = _overlap_tail(prev_text, overlap_tokens, enc)
+            if tail and not text.startswith(tail):
+                text = f"{tail}\n\n{text}"
+                start = max(0, prev_end - len(tail))
+        out.append((text, start, end))
+    return out
 
 
 def _raw_token_window(text: str, size_tokens: int, overlap_tokens: int, enc) -> list[str]:
@@ -134,25 +234,25 @@ def _split_paragraphs(text: str) -> list[str]:
 def chunk_prose_recursive(
     pages: list[ParsedPage], size_tokens: int = 600, overlap_tokens: int = 80
 ) -> list[ChunkPiece]:
-    """Split on paragraph boundaries first, token-window any oversized paragraph."""
+    """Split on paragraph boundaries first, token-window any oversized paragraph. Offsets
+    are real positions in the page text, and consecutive chunks carry a sentence-level
+    overlap so a fact spanning a paragraph boundary isn't lost between chunks."""
     enc = _get_encoding()
     pieces: list[ChunkPiece] = []
     for page in pages:
         text = (page.text or "").strip()
         if not text:
             continue
-        blocks = _split_paragraphs(text)
-        offset = 0
-        for chunk_text in _pack_blocks(blocks, size_tokens, overlap_tokens, enc):
+        packed = _pack_spans(_paragraph_spans(text), size_tokens, overlap_tokens, enc)
+        for chunk_text, start, end in _apply_prose_overlap(packed, overlap_tokens, enc):
             pieces.append(
                 ChunkPiece(
                     page=page.page,
-                    offset_start=offset,
-                    offset_end=offset + len(chunk_text),
+                    offset_start=start,
+                    offset_end=end,
                     text=chunk_text,
                 )
             )
-            offset += len(chunk_text)
     return pieces
 
 
@@ -399,26 +499,31 @@ class _TableSegment:
     data_lines: list[str]
 
 
-def _split_prose_and_tables(text: str) -> list[_ProseSegment | _TableSegment]:
-    """Split page text into ordered prose/table segments around any
-    `<<TABLE>>...<<END_TABLE>>`-marked blocks (from `_parse_docx`), preserving the
-    original document order."""
-    segments: list[_ProseSegment | _TableSegment] = []
+def _split_prose_and_tables(
+    text: str,
+) -> list[tuple[_ProseSegment | _TableSegment, int]]:
+    """Split page text into ordered (segment, start_offset) pairs around any
+    `<<TABLE>>...<<END_TABLE>>`-marked blocks (from `_parse_docx` or the PDF table
+    extractor), preserving original document order and each segment's real start offset in
+    the page so downstream chunks carry genuine offsets."""
+    segments: list[tuple[_ProseSegment | _TableSegment, int]] = []
     last_end = 0
     for m in _TABLE_BLOCK.finditer(text):
-        before = text[last_end : m.start()].strip()
+        raw_before = text[last_end : m.start()]
+        before = raw_before.strip()
         if before:
-            segments.append(_ProseSegment(before))
+            segments.append((_ProseSegment(before), last_end + raw_before.find(before[:1])))
         table_lines = [line for line in m.group(1).split("\n") if line.strip()]
         if len(table_lines) >= 2:
-            segments.append(_TableSegment(table_lines[0], table_lines[1:]))
+            segments.append((_TableSegment(table_lines[0], table_lines[1:]), m.start()))
         elif table_lines:
-            segments.append(_ProseSegment(table_lines[0]))
+            segments.append((_ProseSegment(table_lines[0]), m.start()))
         last_end = m.end()
-    tail = text[last_end:].strip()
+    raw_tail = text[last_end:]
+    tail = raw_tail.strip()
     if tail:
-        segments.append(_ProseSegment(tail))
-    return segments or [_ProseSegment(text)]
+        segments.append((_ProseSegment(tail), last_end + raw_tail.find(tail[:1])))
+    return segments or [(_ProseSegment(text), 0)]
 
 
 def chunk_prose_with_tables(
@@ -438,21 +543,22 @@ def chunk_prose_with_tables(
         text = (page.text or "").strip()
         if not text:
             continue
-        offset = 0
-        for segment in _split_prose_and_tables(text):
+        for segment, seg_start in _split_prose_and_tables(text):
             if isinstance(segment, _ProseSegment):
-                blocks = _split_paragraphs(segment.text)
-                for chunk_text in _pack_blocks(blocks, size_tokens, overlap_tokens, enc):
+                packed = _pack_spans(
+                    _paragraph_spans(segment.text, base=seg_start), size_tokens, overlap_tokens, enc
+                )
+                for chunk_text, start, end in _apply_prose_overlap(packed, overlap_tokens, enc):
                     pieces.append(
                         ChunkPiece(
                             page=page.page,
-                            offset_start=offset,
-                            offset_end=offset + len(chunk_text),
+                            offset_start=start,
+                            offset_end=end,
                             text=chunk_text,
                         )
                     )
-                    offset += len(chunk_text)
             else:
+                offset = seg_start
                 for table_piece in _chunk_one_table(
                     page, "", segment.header, segment.data_lines, rows_per_chunk, size_tokens
                 ):

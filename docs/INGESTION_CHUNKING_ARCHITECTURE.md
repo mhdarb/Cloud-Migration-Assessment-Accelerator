@@ -1,6 +1,6 @@
 # Ingestion & Chunking Architecture
 
-Status: reflects the implemented pipeline as of 2026-09-23. Companion to
+Status: reflects the implemented pipeline as of 2026-09-24. Companion to
 [ARCHITECTURE.md](ARCHITECTURE.md) (system-wide) and
 [DYNAMIC_ARCHITECTURE.md](DYNAMIC_ARCHITECTURE.md) (model-backed ports).
 
@@ -23,17 +23,24 @@ flowchart TD
     parse --> ext{file extension}
 
     ext -->|.zip| zipType[doc_type = code_snapshot<br/>content unread here]
-    ext -->|.pdf| pdfParse[_parse_pdf: pypdf per-page text]
-    ext -->|.docx / .doc| docxParse[_parse_docx: document-order walk]
-    ext -->|.xlsx / .xls| xlsxParse[_parse_xlsx: openpyxl, one page per sheet]
-    ext -->|.csv| csvParse[_parse_csv]
-    ext -->|.json| jsonParse[_parse_json: list of dicts to pipe rows]
+    ext -->|.pdf| pdfParse[_parse_pdf: pdfplumber tables+OCR<br/>fallback pypdf text]
+    ext -->|.docx| docxParse[_parse_docx: document-order walk]
+    ext -->|.doc| docReject[OLE2 magic? reject:<br/>re-save as .docx]
+    ext -->|.xlsx / .xls| xlsxParse[_parse_xlsx: header detect +<br/>merged fill, one page per sheet]
+    ext -->|.csv| csvParse[_parse_csv, row-capped]
+    ext -->|.json| jsonParse[_parse_json: records under<br/>any key to pipe rows]
+    ext -->|.md / text| txtParse[markdown pipe tables<br/>to TABLE blocks]
 
-    pdfParse --> classify
+    pdfParse --> emptyChk{near-zero text?}
+    emptyChk -->|yes| gapEmpty[gap: scanned/empty<br/>enable OCR]
+    emptyChk -->|no| classify
+    gapEmpty --> classify
     docxParse --> classify
+    docReject -->|parse error| gap1
     xlsxParse --> classify
     csvParse --> classify
     jsonParse --> classify
+    txtParse --> classify
     zipType --> chunk
 
     classify[_classify_document<br/>skipped for .zip] --> classifier{DocClassifier<br/>settings.doc_classifier}
@@ -100,11 +107,34 @@ ingest run.
 | Extension | Parser | Notes |
 |---|---|---|
 | `.zip` | inline in `parse_file` | Content is *not* read here — just a placeholder page; real unzip/scan happens later, only if `doc_type == code_snapshot` |
-| `.pdf` | `_parse_pdf` | `pypdf`, one `ParsedPage` per page |
-| `.docx`/`.doc` | `_parse_docx` | See "DOCX document-order walk" below |
-| `.xlsx`/`.xls` | `_parse_xlsx` | `openpyxl`, one `ParsedPage` per sheet, `# Sheet: <name>` header, rows pipe-joined |
-| `.csv` | `_parse_csv` | Single page, rows pipe-joined |
-| `.json` | `_parse_json` | List of flat dicts → header + pipe rows (so it can flow through the same inventory-row chunker as a spreadsheet); anything else → pretty-printed JSON as prose |
+| `.pdf` | `_parse_pdf` | Prefers `pdfplumber` (structured tables → `<<TABLE>>` blocks, plus OCR-able page images); falls back to `pypdf` per-page text when pdfplumber is absent. See "PDF robustness" below |
+| `.docx` | `_parse_docx` | See "DOCX document-order walk" below |
+| `.doc` | rejected in `parse_file` | A true OLE2 binary `.doc` (sniffed by magic bytes) can't be read by `python-docx`; raises a clear "re-save as .docx" error rather than an opaque failure. A `.docx` mislabeled `.doc` still parses |
+| `.xlsx`/`.xls`/`.xlsm` | `_parse_xlsx` | `openpyxl` (read-only), one `ParsedPage` per sheet, `# Sheet: <name>` header, rows pipe-joined. Detects the real header row under a title/blank band and forward-fills merged header cells; row-capped (`MAX_ROWS_PER_SHEET`) |
+| `.csv` | `_parse_csv` | Single page, rows pipe-joined, row-capped (`MAX_ROWS_PER_SHEET`) |
+| `.json` | `_parse_json` | Finds the list-of-records under *any* top-level key (not just `servers`), searched one level deep → header + pipe rows (so it flows through the same inventory-row chunker as a spreadsheet); anything else → pretty-printed JSON as prose |
+| `.md`/`.markdown` and any other text | else-branch | UTF-8 (BOM-tolerant, never raises on a bad byte); GitHub-style pipe tables are rewritten to `<<TABLE>>` blocks so they chunk structurally |
+
+**Parsing robustness guardrails.** Every path is designed so an unusual
+document degrades to a *visible gap* rather than silent data loss, an OOM, or a
+runaway chunk count. `ParseResult.warnings` carries non-fatal issues, which
+`_ingest_one` turns into report gaps (same mechanism as the shape guard):
+
+- **Empty / scanned detection** (`_flag_empty_extraction`) — a document that
+  parses "successfully" but yields fewer than `MIN_CHARS_PER_PAGE` chars/page
+  (the classic image-only PDF, or a corrupt file) is flagged instead of
+  silently contributing zero chunks.
+- **PDF robustness** (`_parse_pdf`) — with `pdfplumber` installed and
+  `PDF_TABLE_EXTRACTION` on, each page's tables are pulled out as `<<TABLE>>`
+  blocks (so inventory-in-PDF gets the same row/summary chunking a spreadsheet
+  does) and prose is taken from the non-table regions. When a page is otherwise
+  empty and `OCR_ENABLED` is set, the rendered page image is OCR'd via the
+  optional `pytesseract` + system `tesseract` binary. Every optional piece is a
+  soft import: a missing library degrades (pdfplumber → `pypdf`; no tesseract →
+  the empty-extraction gap) and never fails ingest.
+- **Resource caps** — `MAX_FILE_MB` (checked before load), `MAX_PAGES_PER_DOC`,
+  `MAX_ROWS_PER_SHEET`, and `MAX_CHUNKS_PER_DOC` (enforced in `ingest._cap_chunks`).
+  Exceeding one truncates with a surfaced gap.
 
 **DOCX document-order walk.** `_parse_docx` does not use
 `document.paragraphs` / `document.tables` — each only returns one element
@@ -200,21 +230,34 @@ DOCX's prose):
 **`chunk_prose_with_tables`** (the default for non-inventory,
 non-questionnaire docs): `_split_prose_and_tables` scans the parsed text
 for `<<TABLE>>...<<END_TABLE>>` sentinel blocks (written by `_parse_docx`)
-and splits it into an ordered list of `_ProseSegment` / `_TableSegment`
-pieces. Prose segments are packed into token windows
-(`chunk_size_tokens`/`chunk_overlap_tokens`) exactly like the old
-paragraph-recursive chunker; table segments are routed through
-`_chunk_one_table` and tagged `embedded_table: true`. Both segment types
-are emitted **in original document order** — a table in the middle of an
-architecture doc doesn't get shoved to the end of the chunk list.
+and splits it into an ordered list of `(_ProseSegment | _TableSegment,
+start_offset)` pairs. Prose segments are packed into token windows
+(`chunk_size_tokens`/`chunk_overlap_tokens`) via the span-aware packer;
+table segments are routed through `_chunk_one_table` and tagged
+`embedded_table: true`. Both segment types are emitted **in original
+document order** — a table in the middle of an architecture doc doesn't get
+shoved to the end of the chunk list.
+
+**Real source offsets + prose overlap.** The prose path
+(`chunk_prose_recursive` and prose segments of `chunk_prose_with_tables`)
+packs *paragraph spans* (`_paragraph_spans` → `_pack_spans`), so each chunk's
+`offset_start`/`offset_end` are genuine character positions in the source page
+(a chunk can be located/highlighted back in the original), not a running length
+counter. `_apply_prose_overlap` then prepends each chunk (after the first) with
+the trailing sentences (~`chunk_overlap_tokens`) of the previous chunk, so a
+fact spanning a paragraph boundary survives in at least one chunk; the offset
+start is pulled back to reflect the carried region. (Table/manifest chunks still
+use synthetic within-segment offsets — their citations key off `row_range` /
+`file_path` metadata, not offsets.)
 
 **Oversized-paragraph splitting** (`_window_by_tokens`) tries sentence
 boundaries first: a paragraph that's too long for one chunk is split into
-sentences (`_split_sentences`) and those are token-packed via the same
-`_pack_blocks` greedy packer, so a chunk boundary lands after a `.`/`!`/`?`
-rather than at an arbitrary token offset. Only a single run-on block with
-no sentence punctuation at all (a pathological case) still falls back to
-a raw token/char cut (`_raw_token_window`).
+sentences (`_split_sentences`, which also breaks on CJK terminators
+`。！？；` that carry no trailing whitespace) and those are token-packed via
+the same `_pack_blocks` greedy packer, so a chunk boundary lands after a
+sentence end rather than at an arbitrary token offset. Only a single run-on
+block with no sentence punctuation at all (a pathological case) still falls
+back to a raw token/char cut (`_raw_token_window`).
 
 **Context annotation** (`_annotate_with_context`, run once per document
 at the end of `DocumentChunker.chunk()`) tags every piece's metadata with
@@ -296,7 +339,10 @@ in `.zip` — calls `_ingest_code_snapshot`, which:
 
 | Condition | Where | Gap text pattern |
 |---|---|---|
-| File can't be parsed at all | `_ingest_one` | `"Skipped unreadable document <file>: <error>"` |
+| File can't be parsed at all (incl. legacy `.doc`, oversized file, invalid JSON) | `_ingest_one` | `"Skipped unreadable document <file>: <error>"` |
+| Scanned / empty document (≈no extractable text) | `_flag_empty_extraction` → `_ingest_one` | `"'<file>' produced almost no extractable text (...); it looks scanned or image-only ..."` |
+| Page/row truncated at a resource cap | `_enforce_page_cap` / `_parse_xlsx` / `_parse_csv` | `"'<file>' has N pages; only the first M were ingested ..."` |
+| Chunk count over `MAX_CHUNKS_PER_DOC` | `_cap_chunks` | `"'<file>' produced N chunks, over the M limit ...; only the first M were ingested"` |
 | Classifier confidence below threshold | `_classify_document` | `"Document '<file>' classified as <type> with low confidence (...)"` |
 | Table shape guard failed | `_flag_shape_guard_failures` | `"'<file>' has an irregularly-shaped table (<reason>); row-level extraction was skipped for it — verify manually."` |
 | Code snapshot processing failed | `_ingest_code_snapshot` | `"Failed to process code snapshot <file>: <error>"` |
@@ -320,6 +366,7 @@ in `.zip` — calls `_ingest_code_snapshot`, which:
 | Test file | Covers |
 |---|---|
 | [`test_chunkers.py`](../apps/api/tests/test_chunkers.py) | Row-grouping (adaptive token budget + row-count cap), summary aggregates, shape guard (ragged columns, hidden header), sentence-aware oversized-paragraph splitting, `section_title`/`embed_context` annotation, Q/A splitting, manifest-file chunking, doc-type routing |
+| [`test_parsing_robustness.py`](../apps/api/tests/test_parsing_robustness.py) | Empty/scanned-PDF gap, legacy `.doc` rejection, markdown-table conversion, generalized JSON record discovery, XLSX header detection + merged-header forward-fill + preamble folding, resource caps (file size / page / CSV row), PDF `pdfplumber` table extraction + OCR fallback (faked), CJK sentence splitting, real prose offsets, prose overlap |
 | [`test_docx_tables.py`](../apps/api/tests/test_docx_tables.py) | DOCX document-order preservation, empty-cell alignment, embedded-table chunking + summary, embedded shape-guard fallback |
 | [`test_local_rag.py`](../apps/api/tests/test_local_rag.py) | `chunk_search_text`; a dangling-reference prose chunk becoming retrievable via its `embed_context` lookback |
 | [`test_llm_reasoning.py`](../apps/api/tests/test_llm_reasoning.py) | `_spotlight_chunks` renders `section_title` and `parent_context`, neutralizes injection-like content in both |
