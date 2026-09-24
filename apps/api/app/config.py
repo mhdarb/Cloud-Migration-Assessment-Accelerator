@@ -73,6 +73,11 @@ class Settings(BaseSettings):
     llm_retry_base_delay: float = 0.5
     agent_max_llm_calls: int = 40
     agent_wall_clock_seconds: float = 240.0
+    # A skill flagged `exhaustive_doc_types` (e.g. servers/sizing over inventory) pulls
+    # *every* chunk of those doc types, not just the top-k, so no server is silently left
+    # unsized. This caps how many such chunks feed one extraction pass to bound the LLM
+    # context; beyond it, a coverage gap is surfaced rather than silently dropping rows.
+    agent_exhaustive_chunk_cap: int = 60
 
     # Chunking (P1)
     chunk_size_tokens: int = 600

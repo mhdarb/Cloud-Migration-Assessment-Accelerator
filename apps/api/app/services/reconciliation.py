@@ -20,6 +20,7 @@ from app.models.entities import (
 from app.schemas.api import ExtractionResult
 from app.services.inventory import load_inventory
 from app.services.llm_reasoning import GroundedProse, get_grounded_prose
+from app.services.normalization import comparison_value
 
 
 def persist_extraction(
@@ -77,7 +78,10 @@ def persist_extraction(
         groups[(claim.entity_type, claim.entity_key, claim.attribute)].append(claim)
 
     for (etype, ekey, attr), group in groups.items():
-        values = {c.value.strip().lower() for c in group}
+        # Compare on the canonical value so a measured field expressed differently across
+        # sources ("16 GB" vs "16384 MB" vs "16.0") is recognized as agreement, not raised
+        # as a spurious conflict — while a genuine magnitude difference still is.
+        values = {comparison_value(attr, c.value) for c in group}
         if len(values) <= 1:
             continue
 

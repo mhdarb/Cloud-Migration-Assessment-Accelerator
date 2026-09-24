@@ -207,6 +207,144 @@ def test_planner_off_reproduces_full_sweep(db_session, assessment, monkeypatch):
     assert metrics["rag_queries"] == len(RAG_QUERIES) + 1
 
 
+def test_inventory_coverage_is_exhaustive_not_topk(db_session, assessment):
+    """A CMDB with more inventory chunks than RAG_TOP_K must still have EVERY server
+    seen by the servers/sizing skills. A top-k retriever alone would miss the tail; the
+    exhaustive-doc-type policy pulls the whole inventory into those skills."""
+    import re
+
+    from app.schemas.api import ExtractedClaim, ExtractionResult
+
+    n_chunks = 12  # > rag_top_k (8)
+    doc = Document(
+        assessment_id=assessment.id,
+        filename="cmdb.xlsx",
+        content_type="application/vnd.ms-excel",
+        storage_path="/tmp/cmdb.xlsx",
+        doc_type=DocumentType.inventory,
+        precedence=100,
+    )
+    db_session.add(doc)
+    db_session.flush()
+    for i in range(n_chunks):
+        db_session.add(
+            Chunk(
+                assessment_id=assessment.id,
+                document_id=doc.id,
+                chunk_index=i,
+                page=1,
+                offset_start=0,
+                offset_end=40,
+                text=f"hostname | vcpu | memory_gb\nsrv-{i:02d} | 4 | 16",
+                metadata_json={"row_range": [i, i + 1]},
+            )
+        )
+    db_session.commit()
+
+    class TopKRetriever:
+        """Simulates a top-k retriever that only ever surfaces the first RAG_TOP_K chunks
+        (the exact condition that silently drops the inventory tail)."""
+
+        def retrieve(self, _db, aid, _query, top_k=None):
+            rows = (
+                _db.query(Chunk)
+                .filter(Chunk.assessment_id == aid)
+                .order_by(Chunk.chunk_index)
+                .limit(top_k or 8)
+                .all()
+            )
+            return rows
+
+    class PerChunkServerLlm:
+        """Emits one grounded server claim per chunk it actually sees in the payload."""
+
+        def extract(self, query, chunk_payload, **kwargs):
+            claims = []
+            for item in chunk_payload:
+                match = re.search(r"srv-\d+", item.get("text", ""))
+                if not match:
+                    continue
+                key = match.group()
+                claims.append(
+                    ExtractedClaim(
+                        entity_type="server",
+                        entity_key=key,
+                        attribute="name",
+                        value=key,
+                        confidence=0.9,
+                        evidence_quote=key,
+                        chunk_ids=[item["chunk_id"]],
+                    )
+                )
+            return ExtractionResult(claims=claims)
+
+    docs = {doc.id: doc}
+    result, _ = run_extract_agent(
+        db_session,
+        assessment.id,
+        docs,
+        retriever=TopKRetriever(),
+        llm=PerChunkServerLlm(),
+        use_mock=False,
+    )
+    seen = {c.entity_key for c in result.claims if c.entity_type == "server"}
+    expected = {f"srv-{i:02d}" for i in range(n_chunks)}
+    # Every server is covered — not just the top-k the retriever surfaced.
+    assert seen == expected, f"missing servers: {sorted(expected - seen)}"
+
+
+def test_exhaustive_cap_surfaces_coverage_gap(db_session, assessment, monkeypatch):
+    monkeypatch.setenv("AGENT_EXHAUSTIVE_CHUNK_CAP", "3")
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+
+    doc = Document(
+        assessment_id=assessment.id,
+        filename="big-cmdb.xlsx",
+        content_type="application/vnd.ms-excel",
+        storage_path="/tmp/big.xlsx",
+        doc_type=DocumentType.inventory,
+        precedence=100,
+    )
+    db_session.add(doc)
+    db_session.flush()
+    for i in range(8):  # > cap of 3
+        db_session.add(
+            Chunk(
+                assessment_id=assessment.id,
+                document_id=doc.id,
+                chunk_index=i,
+                page=1,
+                offset_start=0,
+                offset_end=20,
+                text=f"hostname | vcpu\nsrv-{i} | 4",
+            )
+        )
+    db_session.commit()
+
+    class NoHitRetriever:
+        def retrieve(self, *args, **kwargs):
+            return []
+
+    class NoOpLlm:
+        def extract(self, query, chunk_payload, **kwargs):
+            from app.schemas.api import ExtractionResult
+
+            return ExtractionResult()
+
+    result, _ = run_extract_agent(
+        db_session,
+        assessment.id,
+        {doc.id: doc},
+        retriever=NoHitRetriever(),
+        llm=NoOpLlm(),
+        use_mock=False,
+    )
+    assert any("coverage cap" in g for g in result.gaps)
+    get_settings.cache_clear()
+
+
 def test_llm_path_adds_one_gap_query(db_session, assessment):
     class FakeChunk:
         def __init__(self):

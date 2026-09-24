@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import json
 import math
-import re
 from typing import Any
 
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.models.entities import InfrastructureRecommendation, Server
+from app.services.normalization import (
+    INFRA_COLUMN_ALIASES,
+    MEASURED_FIELDS,
+    is_plausible,
+    to_canonical,
+)
 from app.services.pricing import load_catalog, price_vm
 
 UNSUPPORTED_OS_TOKENS = (
@@ -25,59 +30,40 @@ UNSUPPORTED_OS_TOKENS = (
     "os400",
 )
 
-MEASURED_FIELDS = (
-    "vcpus",
-    "memory_gb",
-    "cpu_utilization_pct",
-    "memory_utilization_pct",
-    "disk_gb",
-    "disk_iops",
-    "disk_throughput_mbps",
-)
 
-
-def _number(value: Any) -> float | None:
-    if value is None:
-        return None
-    match = re.search(r"-?\d+(?:\.\d+)?", str(value).replace(",", ""))
-    return float(match.group()) if match else None
+def _first_alias_value(attrs: dict[str, Any], canonical: str) -> Any:
+    """The first non-empty attribute value under any alias of `canonical` — so a value
+    stored under a source-specific header (ram, storage_gb, cores, ...) is still found."""
+    for alias in INFRA_COLUMN_ALIASES.get(canonical, {canonical}):
+        value = attrs.get(alias)
+        if value not in (None, ""):
+            return value
+    return None
 
 
 def normalize_workload(server: Server) -> dict[str, Any]:
     attrs = server.attributes or {}
-    aliases = {
-        "vcpus": ("vcpus", "vcpu", "cpu_cores", "cores"),
-        "memory_gb": ("memory_gb", "memory", "ram_gb", "ram"),
-        "cpu_utilization_pct": (
-            "cpu_utilization_pct",
-            "cpu_utilization",
-            "avg_cpu_pct",
-            "cpu_pct",
-        ),
-        "memory_utilization_pct": (
-            "memory_utilization_pct",
-            "memory_utilization",
-            "avg_memory_pct",
-            "memory_pct",
-        ),
-        "disk_gb": ("disk_gb", "storage_gb", "disk_capacity_gb", "storage"),
-        "disk_iops": ("disk_iops", "iops"),
-        "disk_throughput_mbps": ("disk_throughput_mbps", "throughput_mbps"),
-    }
     normalized: dict[str, Any] = {
         "server": server.name,
         "server_key": server.normalized_key,
-        "os": attrs.get("os", "unknown"),
-        "architecture": str(attrs.get("architecture", "x64")).lower(),
-        "environment": str(attrs.get("environment", "production")).lower(),
+        "os": _first_alias_value(attrs, "os") or "unknown",
+        "architecture": str(_first_alias_value(attrs, "architecture") or "x64").lower(),
+        "environment": str(_first_alias_value(attrs, "environment") or "production").lower(),
         "raw": attrs,
         "evidence_confidence": server.confidence,
     }
-    for target, names in aliases.items():
-        normalized[target] = next(
-            (_number(attrs[name]) for name in names if _number(attrs.get(name)) is not None),
-            None,
-        )
+    # Convert each measured field to its canonical unit (GB, %, cores, IOPS, MB/s). A value
+    # outside its plausibility bound (a unit misread or typo) is dropped to None so the
+    # missing-field assumption + review path handles it instead of feeding the SKU math a
+    # nonsensical number; the discarded values are recorded for the report.
+    implausible: list[str] = []
+    for target in MEASURED_FIELDS:
+        value = to_canonical(target, _first_alias_value(attrs, target))
+        if value is not None and not is_plausible(target, value):
+            implausible.append(f"{target}={value:g}")
+            value = None
+        normalized[target] = value
+    normalized["implausible_fields"] = implausible
     return normalized
 
 
@@ -191,6 +177,11 @@ def size_profile(profile: dict[str, Any]) -> dict[str, Any]:
     settings = get_settings()
     catalog = load_catalog()
     p, assumptions = _with_assumptions(profile)
+    for field in p.get("implausible_fields") or []:
+        assumptions.append(
+            f"Discarded implausible {field} (outside the expected range — likely a unit "
+            "misread or typo); used a default instead. Verify the source value."
+        )
     os_supported = _os_supported(p["os"])
     if not os_supported:
         return _blocked_result(

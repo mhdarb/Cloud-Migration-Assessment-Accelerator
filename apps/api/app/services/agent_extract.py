@@ -174,6 +174,29 @@ def _payload_to_chunks(
     return chunks_from_payload(payload, assessment_id)
 
 
+def _fetch_doc_type_chunks(
+    db: Session, assessment_id: str, doc_types: tuple[DocumentType, ...], cap: int
+) -> tuple[list[Chunk], bool]:
+    """Every chunk (up to `cap`) from documents of the given types, in document order.
+    The second value is True when the cap truncated the set — used to surface a coverage
+    gap so a large estate isn't silently under-covered. This is what makes the sizing
+    extraction exhaustive over the inventory instead of limited to a top-k sample."""
+    if not doc_types:
+        return [], False
+    rows = (
+        db.query(Chunk)
+        .join(Document, Document.id == Chunk.document_id)
+        .filter(
+            Chunk.assessment_id == assessment_id,
+            Document.doc_type.in_(list(doc_types)),
+        )
+        .order_by(Chunk.document_id, Chunk.chunk_index)
+        .limit(cap + 1)
+        .all()
+    )
+    return rows[:cap], len(rows) > cap
+
+
 def _extract_node_out(result: ExtractionResult, report: Any) -> dict[str, Any]:
     return {
         **_result_to_parts(result),
@@ -320,18 +343,41 @@ def build_llm_extract_graph(
                 "chunk_payload": [],
                 "node_trace": ["retrieve:skip"],
             }
-        chunks = retriever.retrieve(
-            db, state["assessment_id"], query, top_k=settings.rag_top_k
-        )
-        texts = {c.id: c.text for c in chunks}
-        payload = chunks_to_payload(chunks, db=db)
-        return {
-            "chunk_ids": [c.id for c in chunks],
+        skill = SKILLS_BY_NAME.get(state.get("current_skill_name") or "")
+        top_k = (skill.top_k if skill and skill.top_k else None) or settings.rag_top_k
+        chunks = retriever.retrieve(db, state["assessment_id"], query, top_k=top_k)
+        by_id: dict[str, Chunk] = {c.id: c for c in chunks}
+
+        coverage_gaps: list[str] = []
+        if skill and skill.exhaustive_doc_types:
+            # Guarantee every inventory chunk is seen by this skill, not just the top-k —
+            # so no server is left unsized. Union with the query hits (which still bring
+            # in relevant prose/architecture context).
+            exhaustive, truncated = _fetch_doc_type_chunks(
+                db, state["assessment_id"], skill.exhaustive_doc_types, settings.agent_exhaustive_chunk_cap
+            )
+            for chunk in exhaustive:
+                by_id.setdefault(chunk.id, chunk)
+            if truncated:
+                coverage_gaps.append(
+                    f"'{skill.name}' extraction hit the {settings.agent_exhaustive_chunk_cap}-chunk "
+                    "coverage cap; the estate has more inventory than one pass covers, so some "
+                    "servers may be unsized — raise AGENT_EXHAUSTIVE_CHUNK_CAP or split the inventory."
+                )
+
+        merged = list(by_id.values())
+        texts = {c.id: c.text for c in merged}
+        payload = chunks_to_payload(merged, db=db)
+        out: dict[str, Any] = {
+            "chunk_ids": [c.id for c in merged],
             "chunk_texts": texts,
             "chunk_payload": payload,
-            "all_retrieved_ids": [c.id for c in chunks],
-            "node_trace": [f"retrieve:n={len(chunks)}"],
+            "all_retrieved_ids": [c.id for c in merged],
+            "node_trace": [f"retrieve:n={len(merged)}"],
         }
+        if coverage_gaps:
+            out["gaps"] = coverage_gaps  # accumulates via the reducer; deduped at finalize
+        return out
 
     def extract(state: ExtractGraphState) -> dict[str, Any]:
         query = state.get("current_query") or ""

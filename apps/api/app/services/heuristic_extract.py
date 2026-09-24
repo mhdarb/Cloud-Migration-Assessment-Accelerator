@@ -9,6 +9,11 @@ from app.models.entities import Chunk, Document, DocumentType
 from app.schemas.api import ExtractedClaim, ExtractedDependency, ExtractionResult
 from app.schemas.chunking import ChunkPayload
 
+# Single source of truth for the column-alias vocabulary lives in `normalization`;
+# re-exported here because `chunkers` and existing callers import these names from this module.
+from app.services.normalization import INFRA_COLUMN_ALIASES
+from app.services.normalization import canonical_header as _canonical_header
+
 
 def chunks_from_payload(
     payload: list[ChunkPayload], assessment_id: str = ""
@@ -213,32 +218,6 @@ def clean_name(name: str, max_words: int = 4) -> str | None:
     return name
 
 
-INFRA_COLUMN_ALIASES = {
-    "server": {"server", "hostname", "host", "server_name"},
-    "vcpus": {"vcpus", "vcpu", "cpu_cores", "cores"},
-    "memory_gb": {"memory_gb", "memory", "ram_gb", "ram"},
-    "cpu_utilization_pct": {"cpu_utilization_pct", "cpu_utilization", "avg_cpu_pct", "cpu_pct"},
-    "memory_utilization_pct": {
-        "memory_utilization_pct",
-        "memory_utilization",
-        "avg_memory_pct",
-        "memory_pct",
-    },
-    "disk_gb": {"disk_gb", "storage_gb", "disk_capacity_gb", "storage"},
-    "disk_iops": {"disk_iops", "iops"},
-    "disk_throughput_mbps": {"disk_throughput_mbps", "throughput_mbps"},
-    "environment": {"environment", "env"},
-    "region": {"region", "location"},
-    "architecture": {"architecture", "arch"},
-}
-
-
-def _canonical_header(value: str) -> str:
-    key = re.sub(r"[^a-z0-9]+", "_", value.strip().lower()).strip("_")
-    for canonical, aliases in INFRA_COLUMN_ALIASES.items():
-        if key in aliases:
-            return canonical
-    return key
 
 
 def _extract_inventory_columns(chunk: Chunk) -> list[ExtractedClaim]:

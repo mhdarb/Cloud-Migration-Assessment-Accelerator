@@ -56,6 +56,14 @@ class Skill:
     applies_to: Callable[[set[DocumentType]], bool] | None = None
     target_schema: type[BaseModel] = ExtractionResult
     system_prompt: str | None = None
+    # Retrieval policy (used by the LangGraph LLM path's `retrieve` node):
+    #   top_k              -- override the global RAG_TOP_K candidate count for this skill.
+    #   exhaustive_doc_types -- guarantee *every* chunk from these doc types is seen by
+    #     this skill, not just the query's top-k hits. Essential for structured inventory:
+    #     a generic keyword query + top-k would silently miss servers past the top chunks,
+    #     so the sizing engine must extract over the whole inventory, not a sample.
+    top_k: int | None = None
+    exhaustive_doc_types: tuple[DocumentType, ...] = ()
 
 
 SKILLS: list[Skill] = [
@@ -72,12 +80,14 @@ SKILLS: list[Skill] = [
         RAG_QUERIES[1],
         "Server hostnames, OS, infrastructure inventory",
         applies_to=lambda dt: _has_any(dt, _INVENTORY_LIKE | {DocumentType.architecture}),
+        exhaustive_doc_types=(DocumentType.inventory,),
     ),
     Skill(
         "sizing",
         RAG_QUERIES[2],
         "Server sizing: vCPU, memory, storage, IOPS",
         applies_to=lambda dt: _has_any(dt, _INVENTORY_LIKE),
+        exhaustive_doc_types=(DocumentType.inventory,),
         target_schema=ServerSizingTarget,
         system_prompt=(
             "Emit ONLY numeric/OS sizing facts per server into the `servers` list "
