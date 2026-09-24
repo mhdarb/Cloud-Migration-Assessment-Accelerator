@@ -94,6 +94,20 @@ class Settings(BaseSettings):
     # same <<TABLE>> blocks docx does, so inventory-in-PDF gets row/summary chunking.
     # Falls back to plain `pypdf` text extraction when pdfplumber is unavailable.
     pdf_table_extraction: bool = True
+    # After the line-ruled pass finds nothing, retry with a text-alignment strategy to
+    # catch borderless (whitespace-aligned) tables. OFF by default: pdfplumber's text
+    # strategy is aggressive and will carve ordinary or two-column prose into a fake grid
+    # (even splitting words mid-token), and prose/two-column PDFs are far more common than
+    # borderless-table PDFs. Line-ruled table detection stays on regardless. Enable this
+    # only for a corpus you know is dominated by unruled tables.
+    pdf_borderless_tables: bool = False
+    # Reassemble multi-column PDF pages in true reading order (left column fully, then
+    # right) instead of letting extract_text interleave the columns line by line.
+    pdf_column_detection: bool = True
+    # XLSX files at or under this size are opened fully (not read-only) so merged cells —
+    # including merged *data* cells, not just headers — can be expanded correctly. Larger
+    # files use the streaming read-only path (header forward-fill only) to bound memory.
+    xlsx_full_load_max_mb: float = 25.0
     # Resource caps -- exceed one and the document is truncated with a surfaced gap.
     max_file_mb: float = 100.0
     max_pages_per_doc: int = 5000

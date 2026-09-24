@@ -107,10 +107,10 @@ ingest run.
 | Extension | Parser | Notes |
 |---|---|---|
 | `.zip` | inline in `parse_file` | Content is *not* read here — just a placeholder page; real unzip/scan happens later, only if `doc_type == code_snapshot` |
-| `.pdf` | `_parse_pdf` | Prefers `pdfplumber` (structured tables → `<<TABLE>>` blocks, plus OCR-able page images); falls back to `pypdf` per-page text when pdfplumber is absent. See "PDF robustness" below |
+| `.pdf` | `_parse_pdf` | Prefers `pdfplumber` (structured tables → `<<TABLE>>` blocks, borderless-table recovery, multi-column reading order, OCR-able page images); falls back to `pypdf` per-page text when pdfplumber is absent. See "PDF robustness" below |
 | `.docx` | `_parse_docx` | See "DOCX document-order walk" below |
 | `.doc` | rejected in `parse_file` | A true OLE2 binary `.doc` (sniffed by magic bytes) can't be read by `python-docx`; raises a clear "re-save as .docx" error rather than an opaque failure. A `.docx` mislabeled `.doc` still parses |
-| `.xlsx`/`.xls`/`.xlsm` | `_parse_xlsx` | `openpyxl` (read-only), one `ParsedPage` per sheet, `# Sheet: <name>` header, rows pipe-joined. Detects the real header row under a title/blank band and forward-fills merged header cells; row-capped (`MAX_ROWS_PER_SHEET`) |
+| `.xlsx`/`.xls`/`.xlsm` | `_parse_xlsx` | One `ParsedPage` per sheet, `# Sheet: <name>` header, rows pipe-joined. Detects the real header row under a title/blank band. Files ≤ `XLSX_FULL_LOAD_MAX_MB` are loaded fully so **merged data cells** expand correctly; larger files stream read-only (merged headers forward-filled only). Row-capped (`MAX_ROWS_PER_SHEET`) |
 | `.csv` | `_parse_csv` | Single page, rows pipe-joined, row-capped (`MAX_ROWS_PER_SHEET`) |
 | `.json` | `_parse_json` | Finds the list-of-records under *any* top-level key (not just `servers`), searched one level deep → header + pipe rows (so it flows through the same inventory-row chunker as a spreadsheet); anything else → pretty-printed JSON as prose |
 | `.md`/`.markdown` and any other text | else-branch | UTF-8 (BOM-tolerant, never raises on a bad byte); GitHub-style pipe tables are rewritten to `<<TABLE>>` blocks so they chunk structurally |
@@ -127,11 +127,26 @@ runaway chunk count. `ParseResult.warnings` carries non-fatal issues, which
 - **PDF robustness** (`_parse_pdf`) — with `pdfplumber` installed and
   `PDF_TABLE_EXTRACTION` on, each page's tables are pulled out as `<<TABLE>>`
   blocks (so inventory-in-PDF gets the same row/summary chunking a spreadsheet
-  does) and prose is taken from the non-table regions. When a page is otherwise
-  empty and `OCR_ENABLED` is set, the rendered page image is OCR'd via the
-  optional `pytesseract` + system `tesseract` binary. Every optional piece is a
-  soft import: a missing library degrades (pdfplumber → `pypdf`; no tesseract →
-  the empty-extraction gap) and never fails ingest.
+  does) and prose is taken from the non-table regions. Three further refinements
+  layer on top:
+    - **Borderless tables** (`_find_tables_robust`, `PDF_BORDERLESS_TABLES`, **off by
+      default**) — after the low-false-positive line-ruled pass finds nothing, an opt-in
+      text-alignment retry catches whitespace-aligned tables, each validated by
+      `_looks_like_table` (≥2 rows, ≥3 columns, majority sharing the modal width). It is
+      off by default because pdfplumber's text strategy is aggressive — it will carve
+      ordinary or two-column prose into a fake grid (even splitting words mid-token), and
+      prose PDFs are far more common than borderless-table PDFs. Line-ruled detection is
+      always on.
+    - **Multi-column reading order** (`_extract_text_reading_order`) — a clean,
+      word-free vertical gutter splitting the page into two balanced groups
+      (`_detect_column_boundary`) triggers column-by-column reflow (left fully, then
+      right) instead of `extract_text`'s scan-line interleaving; single-column pages
+      are never reflowed.
+    - **OCR** — when a page is otherwise empty and `OCR_ENABLED` is set, the rendered
+      page image is OCR'd via the optional `pytesseract` (`uv sync --extra ocr`) +
+      system `tesseract` binary.
+  Every optional piece is a soft import: a missing library degrades (pdfplumber →
+  `pypdf`; no tesseract → the empty-extraction gap) and never fails ingest.
 - **Resource caps** — `MAX_FILE_MB` (checked before load), `MAX_PAGES_PER_DOC`,
   `MAX_ROWS_PER_SHEET`, and `MAX_CHUNKS_PER_DOC` (enforced in `ingest._cap_chunks`).
   Exceeding one truncates with a surfaced gap.
@@ -366,7 +381,7 @@ in `.zip` — calls `_ingest_code_snapshot`, which:
 | Test file | Covers |
 |---|---|
 | [`test_chunkers.py`](../apps/api/tests/test_chunkers.py) | Row-grouping (adaptive token budget + row-count cap), summary aggregates, shape guard (ragged columns, hidden header), sentence-aware oversized-paragraph splitting, `section_title`/`embed_context` annotation, Q/A splitting, manifest-file chunking, doc-type routing |
-| [`test_parsing_robustness.py`](../apps/api/tests/test_parsing_robustness.py) | Empty/scanned-PDF gap, legacy `.doc` rejection, markdown-table conversion, generalized JSON record discovery, XLSX header detection + merged-header forward-fill + preamble folding, resource caps (file size / page / CSV row), PDF `pdfplumber` table extraction + OCR fallback (faked), CJK sentence splitting, real prose offsets, prose overlap |
+| [`test_parsing_robustness.py`](../apps/api/tests/test_parsing_robustness.py) | Empty/scanned-PDF gap, legacy `.doc` rejection, markdown-table conversion, generalized JSON record discovery, XLSX header detection + merged **data**-cell expansion + preamble folding, resource caps (file size / page / CSV row), PDF table extraction + OCR fallback (faked) **and a real reportlab-built PDF through live pdfplumber**, borderless-table recovery + validator, multi-column reading-order detection/reflow, CJK + Devanagari/Arabic sentence splitting, real prose offsets, prose overlap |
 | [`test_docx_tables.py`](../apps/api/tests/test_docx_tables.py) | DOCX document-order preservation, empty-cell alignment, embedded-table chunking + summary, embedded shape-guard fallback |
 | [`test_local_rag.py`](../apps/api/tests/test_local_rag.py) | `chunk_search_text`; a dangling-reference prose chunk becoming retrievable via its `embed_context` lookback |
 | [`test_llm_reasoning.py`](../apps/api/tests/test_llm_reasoning.py) | `_spotlight_chunks` renders `section_title` and `parent_context`, neutralizes injection-like content in both |

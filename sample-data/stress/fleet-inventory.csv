@@ -1,0 +1,61 @@
+hostname,role,os,vcpu,memory_gb,disk_gb,region
+fleet-001,app,Ubuntu 22.04,4,8,220,eastus
+fleet-002,db,Windows Server 2022,6,12,340,westeurope
+fleet-003,cache,RHEL 9,8,16,460,eastus
+fleet-004,worker,Ubuntu 22.04,10,20,580,westeurope
+fleet-005,web,Windows Server 2022,12,24,100,eastus
+fleet-006,app,RHEL 9,14,28,220,westeurope
+fleet-007,db,Ubuntu 22.04,16,32,340,eastus
+fleet-008,cache,Windows Server 2022,2,4,460,westeurope
+fleet-009,worker,RHEL 9,4,8,580,eastus
+fleet-010,web,Ubuntu 22.04,6,12,100,westeurope
+fleet-011,app,Windows Server 2022,8,16,220,eastus
+fleet-012,db,RHEL 9,10,20,340,westeurope
+fleet-013,cache,Ubuntu 22.04,12,24,460,eastus
+fleet-014,worker,Windows Server 2022,14,28,580,westeurope
+fleet-015,web,RHEL 9,16,32,100,eastus
+fleet-016,app,Ubuntu 22.04,2,4,220,westeurope
+fleet-017,db,Windows Server 2022,,8,340,eastus
+fleet-018,cache,RHEL 9,6,12,460,westeurope
+fleet-019,worker,Ubuntu 22.04,8,16,580,eastus
+fleet-020,web,Windows Server 2022,10,20,100,westeurope
+fleet-021,app,RHEL 9,12,24,220,eastus
+fleet-022,db,Ubuntu 22.04,14,28,340,westeurope
+fleet-023,cache,Windows Server 2022,16,32,460,eastus
+fleet-024,worker,RHEL 9,2,4,580,westeurope
+fleet-025,web,Ubuntu 22.04,4,8,100,eastus
+fleet-026,app,Windows Server 2022,6,12,220,westeurope
+fleet-027,db,RHEL 9,8,16,340,eastus
+fleet-028,cache,Ubuntu 22.04,10,20,460,westeurope
+fleet-029,worker,Windows Server 2022,12,24,580,eastus
+fleet-030,web,RHEL 9,14,28,100,westeurope
+fleet-031,app,Ubuntu 22.04,16,32,220,eastus
+fleet-032,db,Windows Server 2022,2,4,340,westeurope
+fleet-033,cache,RHEL 9,4,8,460,eastus
+fleet-034,worker,Ubuntu 22.04,,12,580,westeurope
+fleet-035,web,Windows Server 2022,8,16,100,eastus
+fleet-036,app,RHEL 9,10,20,220,westeurope
+fleet-037,db,Ubuntu 22.04,12,24,340,eastus
+fleet-038,cache,Windows Server 2022,14,28,460,westeurope
+fleet-039,worker,RHEL 9,16,32,580,eastus
+fleet-040,web,Ubuntu 22.04,2,4,100,westeurope
+fleet-041,app,Windows Server 2022,4,8,220,eastus
+fleet-042,db,RHEL 9,6,12,340,westeurope
+fleet-043,cache,Ubuntu 22.04,8,16,460,eastus
+fleet-044,worker,Windows Server 2022,10,20,580,westeurope
+fleet-045,web,RHEL 9,12,24,100,eastus
+fleet-046,app,Ubuntu 22.04,14,28,220,westeurope
+fleet-047,db,Windows Server 2022,16,32,340,eastus
+fleet-048,cache,RHEL 9,2,4,460,westeurope
+fleet-049,worker,Ubuntu 22.04,4,8,580,eastus
+fleet-050,web,Windows Server 2022,6,12,100,westeurope
+fleet-051,app,RHEL 9,,16,220,eastus
+fleet-052,db,Ubuntu 22.04,10,20,340,westeurope
+fleet-053,cache,Windows Server 2022,12,24,460,eastus
+fleet-054,worker,RHEL 9,14,28,580,westeurope
+fleet-055,web,Ubuntu 22.04,16,32,100,eastus
+fleet-056,app,Windows Server 2022,2,4,220,westeurope
+fleet-057,db,RHEL 9,4,8,340,eastus
+fleet-058,cache,Ubuntu 22.04,6,12,460,westeurope
+fleet-059,worker,Windows Server 2022,8,16,580,eastus
+fleet-060,web,RHEL 9,10,20,100,westeurope

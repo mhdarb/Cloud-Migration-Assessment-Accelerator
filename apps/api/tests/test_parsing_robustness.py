@@ -24,9 +24,14 @@ from app.services.parsers import (
     ParsedPage,
     ParseResult,
     _convert_markdown_tables,
+    _detect_column_boundary,
     _detect_header_row,
     _find_record_list,
+    _find_tables_robust,
     _forward_fill_header,
+    _looks_like_table,
+    _parse_xlsx_full,
+    _words_to_text,
     parse_file,
 )
 
@@ -318,3 +323,125 @@ def test_prose_overlap_prepends_previous_tail():
     assert "Beta sentence one." in result[1][0]
     assert "Alpha sentence two." in result[1][0]  # tail of previous chunk carried in
     assert result[1][1] < packed[1][1]  # start pulled back to reflect the overlap
+
+
+def test_extended_script_sentence_splitting():
+    assert len(_split_sentences("पहला वाक्य। दूसरा वाक्य।")) == 2  # Devanagari danda
+    assert len(_split_sentences("جملة أولى؟ جملة ثانية.")) == 2  # Arabic question mark
+
+
+# --------------------------------------------------------------------------- #
+# Gap 1: borderless (whitespace-aligned) PDF table detection
+# --------------------------------------------------------------------------- #
+def test_looks_like_table_accepts_grid_rejects_prose():
+    good = _FakeTable([["name", "os", "vcpu"], ["srv-1", "RHEL", "4"], ["srv-2", "RHEL", "8"]])
+    assert _looks_like_table(good)
+    prose = _FakeTable([["A long line of running prose here."], ["Another single-column line."]])
+    assert not _looks_like_table(prose)  # single column => not a table
+    two_col = _FakeTable([["Order Management", "Fleet Tracking"], ["prose left", "prose right"]])
+    assert not _looks_like_table(two_col)  # 2-col unruled block treated as prose, not a table
+
+
+class _FakeBorderlessPage:
+    """find_tables() finds nothing on the default (line-ruled) pass, but the text-alignment
+    retry surfaces a valid grid — the borderless-table case."""
+
+    def find_tables(self, table_settings=None):
+        if table_settings is None:
+            return []
+        return [_FakeTable([["name", "os", "vcpu"], ["srv-1", "RHEL", "4"], ["srv-2", "RHEL", "8"]])]
+
+
+def test_find_tables_robust_recovers_borderless_table(monkeypatch):
+    monkeypatch.setattr(get_settings(), "pdf_borderless_tables", True)  # opt-in feature
+    tables = _find_tables_robust(_FakeBorderlessPage(), get_settings())
+    assert len(tables) == 1
+    assert _looks_like_table(tables[0])
+
+
+def test_find_tables_robust_respects_disable_flag(monkeypatch):
+    monkeypatch.setattr(get_settings(), "pdf_borderless_tables", False)
+    assert _find_tables_robust(_FakeBorderlessPage(), get_settings()) == []
+
+
+# --------------------------------------------------------------------------- #
+# Gap 4: multi-column PDF reading order
+# --------------------------------------------------------------------------- #
+def _word(text, x0, top):
+    return {"text": text, "x0": x0, "x1": x0 + 20, "top": top, "bottom": top + 10}
+
+
+def test_column_boundary_detected_for_two_columns():
+    words = []
+    for row, top in enumerate((0, 12, 24)):
+        words.append(_word(f"L{row}", 50, top))  # left column
+        words.append(_word(f"R{row}", 350, top))  # right column
+    boundary = _detect_column_boundary(words, page_width=600)
+    assert boundary is not None
+    assert 70 < boundary < 350
+
+
+def test_single_column_returns_no_boundary():
+    words = [_word(f"w{i}", 50, i * 12) for i in range(6)]
+    assert _detect_column_boundary(words, page_width=600) is None
+
+
+def test_words_to_text_reads_left_column_top_to_bottom():
+    words = [_word("first", 50, 0), _word("second", 50, 12), _word("third", 50, 24)]
+    assert _words_to_text(words) == "first\nsecond\nthird"
+
+
+# --------------------------------------------------------------------------- #
+# Gap 2: merged *data* cells expanded (full-load XLSX path)
+# --------------------------------------------------------------------------- #
+def test_merged_data_cells_forward_filled(tmp_path):
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Servers"
+    ws.append(["name", "datacenter", "vcpu"])
+    ws.append(["srv-1", "DC-East", 4])
+    ws.append(["srv-2", None, 8])
+    ws.append(["srv-3", None, 16])
+    ws.merge_cells("B2:B4")  # DC-East merged down across three server rows
+    path = tmp_path / "merged.xlsx"
+    wb.save(path)
+
+    result = _parse_xlsx_full(str(path), get_settings())
+    lines = result.pages[0].text.split("\n")
+    # Every row's datacenter column is populated, not just the top-left anchor cell.
+    assert "srv-1 | DC-East | 4" in lines
+    assert "srv-2 | DC-East | 8" in lines
+    assert "srv-3 | DC-East | 16" in lines
+
+
+# --------------------------------------------------------------------------- #
+# Gap 7: a REAL text-bearing PDF through the live pdfplumber path
+# --------------------------------------------------------------------------- #
+def _make_real_pdf_with_table(path):
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    styles = getSampleStyleSheet()
+    story = [
+        Paragraph("Architecture overview of the production estate.", styles["Normal"]),
+        Spacer(1, 12),
+        Table(
+            [["name", "vcpu", "memory_gb"], ["srv-1", "4", "16"], ["srv-2", "8", "32"]],
+            style=TableStyle([("GRID", (0, 0), (-1, -1), 0.5, colors.black)]),
+        ),
+    ]
+    SimpleDocTemplate(str(path), pagesize=letter).build(story)
+    return str(path)
+
+
+def test_real_pdf_text_and_table_extracted(tmp_path):
+    result = parse_file(_make_real_pdf_with_table(tmp_path / "arch.pdf"), "arch.pdf")
+    joined = "\n".join(p.text for p in result.pages)
+    assert "Architecture overview of the production estate." in joined
+    assert parsers.TABLE_BLOCK_START in joined  # the ruled table was recovered as a block
+    assert "srv-1 | 4 | 16" in joined
+    assert not result.warnings  # real content -> no scanned/empty gap

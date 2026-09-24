@@ -1,0 +1,5 @@
+hostname,os,vcpu,notes
+srv-a,RHEL 9,4,ok
+srv-b,Ubuntu 22.04
+srv-c,Windows,8,decommission planned,extra-trailing-field
+srv-d,RHEL 9,4,ok

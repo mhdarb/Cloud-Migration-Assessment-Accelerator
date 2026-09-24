@@ -51,10 +51,12 @@ def _count_tokens(text: str, enc) -> int:
     return max(1, len(text) // _CHARS_PER_TOKEN_ESTIMATE)
 
 
-# Split after Western terminators followed by whitespace, OR after a CJK terminator
-# (。！？；) which is written with no trailing space — without the CJK arm a Chinese/
-# Japanese page reads as one giant "sentence" and always falls to the raw token cut.
-_SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+|(?<=[。！？；])")
+# Split after Western terminators followed by whitespace, OR after a non-spacing
+# terminator used by scripts that don't put a space after the sentence: CJK (。！？；),
+# Devanagari danda (।॥), Arabic/Urdu (؟۔), Armenian (։), Ethiopic (።). Without this second
+# arm such a page reads as one giant "sentence" and always falls to the raw token cut.
+# (Thai/Lao/Khmer have no sentence delimiter at all and still fall to token windowing.)
+_SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+|(?<=[。！？；।॥؟۔։።])")
 
 
 def _split_sentences(text: str) -> list[str]:
@@ -270,6 +272,14 @@ def _extract_number(cell: str) -> float | None:
         return None
 
 
+# Shape-guard tuning (see `check_table_shape` / `_looks_like_header`). Named rather than
+# inline so the sensitivity of "this table is too irregular to trust row-chunking" lives in
+# one place. A table failing the guard falls back to prose and is surfaced as a gap.
+_MAX_RAGGED_ROW_FRACTION = 0.1  # >10% of data rows differing from header width => ragged
+_HEADER_MAX_NUMERIC_RATIO = 0.2  # a header row is mostly non-numeric...
+_HEADER_NUMERIC_GAP = 0.3  # ...and clearly less numeric than the rows beneath it
+
+
 @dataclass(frozen=True)
 class ShapeCheck:
     ok: bool
@@ -292,7 +302,7 @@ def _looks_like_header(candidate: str, following: list[str]) -> bool:
     if not sample_ratios:
         return False
     avg_sample_ratio = sum(sample_ratios) / len(sample_ratios)
-    return cand_ratio < 0.2 and (avg_sample_ratio - cand_ratio) > 0.3
+    return cand_ratio < _HEADER_MAX_NUMERIC_RATIO and (avg_sample_ratio - cand_ratio) > _HEADER_NUMERIC_GAP
 
 
 def check_table_shape(header: str, data_lines: list[str]) -> ShapeCheck:
@@ -305,7 +315,7 @@ def check_table_shape(header: str, data_lines: list[str]) -> ShapeCheck:
     header_count = len(header.split("|"))
     col_counts = [len(line.split("|")) for line in data_lines]
     mismatched = sum(1 for c in col_counts if c != header_count)
-    if mismatched / len(col_counts) > 0.1:
+    if mismatched / len(col_counts) > _MAX_RAGGED_ROW_FRACTION:
         return ShapeCheck(
             False,
             f"inconsistent column counts ({mismatched}/{len(col_counts)} rows differ from "

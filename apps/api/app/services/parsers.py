@@ -32,6 +32,13 @@ _OLE2_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 # A markdown table separator row, e.g. "|---|:--:|" or "--- | ---".
 _MD_TABLE_SEPARATOR = re.compile(r"^\s*\|?[\s:|-]*-[\s:|-]*\|?\s*$")
 
+# Heuristic tuning, named so the thresholds live in one place rather than inline.
+_HEADER_SCAN_ROWS = 10  # how many leading rows to consider when locating the header
+_HEADER_MAX_NUMERIC_RATIO = 0.3  # a header row is mostly non-numeric
+_BORDERLESS_TABLE_MIN_CONSISTENCY = 0.6  # fraction of rows that must share the modal width
+_BORDERLESS_TABLE_MIN_COLS = 3  # a 2-col unruled block is treated as prose, not a table
+_COLUMN_GUTTER_MIN_SIDE = 0.3  # each column must hold at least this fraction of the words
+
 
 @dataclass
 class ParsedPage:
@@ -276,24 +283,21 @@ def _parse_pdf_plumber(path: str, settings) -> ParseResult | None:
 
 
 def _plumber_page_text(page: Any, settings) -> str:
-    tables: list[Any] = []
-    if settings.pdf_table_extraction:
-        try:
-            tables = page.find_tables()
-        except Exception:
-            tables = []
+    tables = _find_tables_robust(page, settings) if settings.pdf_table_extraction else []
 
     segments: list[str] = []
-    try:
-        if tables:
-            table_bboxes = [t.bbox for t in tables]
+    prose_page = page
+    if tables:
+        table_bboxes = [t.bbox for t in tables]
+        try:
             prose_page = page.filter(lambda obj: not _inside_any(obj, table_bboxes))
-            prose = prose_page.extract_text() or ""
-        else:
-            prose = page.extract_text() or ""
+        except Exception:
+            prose_page = page
+    try:
+        prose = _extract_text_reading_order(prose_page, settings)
     except Exception:
-        prose = page.extract_text() or ""
-    if prose.strip():
+        prose = prose_page.extract_text() or ""
+    if prose and prose.strip():
         segments.append(prose.strip())
 
     for table in tables:
@@ -307,6 +311,51 @@ def _plumber_page_text(page: Any, settings) -> str:
     return text
 
 
+def _find_tables_robust(page: Any, settings) -> list[Any]:
+    """Line-ruled table detection first (pdfplumber's default, low false-positive); only
+    if that finds nothing, retry with a text-alignment strategy to catch *borderless*
+    (whitespace-aligned) tables — each candidate validated by `_looks_like_table` so a
+    block of prose or a bulleted list isn't misread as a table."""
+    try:
+        tables = page.find_tables()
+    except Exception:
+        tables = []
+    if tables or not settings.pdf_borderless_tables:
+        return tables
+    try:
+        candidates = page.find_tables(
+            table_settings={
+                "vertical_strategy": "text",
+                "horizontal_strategy": "text",
+                "snap_tolerance": 4,
+                "join_tolerance": 4,
+            }
+        )
+    except Exception:
+        return []
+    return [t for t in candidates if _looks_like_table(t)]
+
+
+def _looks_like_table(table: Any) -> bool:
+    """A validated borderless-table candidate: at least 2 data rows and `_BORDERLESS_TABLE_MIN_COLS`
+    columns, with the majority of rows sharing the modal column count.
+
+    The 3-column floor is deliberate: a *2-column* whitespace-aligned block is far more
+    often a two-column prose layout than a real table, and mistaking it for a table both
+    loses the reading-order reflow and mangles the prose. Genuine 2-column tables almost
+    always arrive ruled (handled by the line pass) or from xlsx/csv/docx, so requiring 3+
+    columns here trades a rare miss for avoiding a common false positive."""
+    rows = [r for r in _safe_extract_table(table) if any((c or "").strip() for c in r)]
+    if len(rows) < 2:
+        return False
+    widths = [len(r) for r in rows]
+    modal = max(set(widths), key=widths.count)
+    if modal < _BORDERLESS_TABLE_MIN_COLS:
+        return False
+    consistent = sum(1 for w in widths if w == modal) / len(widths)
+    return consistent >= _BORDERLESS_TABLE_MIN_CONSISTENCY
+
+
 def _inside_any(obj: dict, bboxes: list[tuple]) -> bool:
     """True if a pdfplumber object's center falls inside any table bounding box."""
     cx = (obj.get("x0", 0) + obj.get("x1", 0)) / 2
@@ -315,6 +364,74 @@ def _inside_any(obj: dict, bboxes: list[tuple]) -> bool:
         if x0 <= cx <= x1 and top <= cy <= bottom:
             return True
     return False
+
+
+def _extract_text_reading_order(page: Any, settings) -> str:
+    """Extract prose in true reading order. On a multi-column page, `extract_text` walks
+    scan-lines and interleaves the columns ("left1 right1 left2 right2..."); here we detect
+    a clean vertical gutter and read each column top-to-bottom, left column first. Falls
+    back to plain `extract_text` whenever no confident column split is found — single-column
+    pages are never reflowed."""
+    plain = page.extract_text() or ""
+    if not settings.pdf_column_detection:
+        return plain
+    try:
+        words = page.extract_words(use_text_flow=False)
+        page_width = float(page.width)
+    except Exception:
+        return plain
+    if len(words) < 20 or not page_width:
+        return plain
+    boundary = _detect_column_boundary(words, page_width)
+    if boundary is None:
+        return plain
+    left = [w for w in words if (w["x0"] + w["x1"]) / 2 < boundary]
+    right = [w for w in words if (w["x0"] + w["x1"]) / 2 >= boundary]
+    reflowed = "\n\n".join(part for part in (_words_to_text(left), _words_to_text(right)) if part)
+    return reflowed or plain
+
+
+def _detect_column_boundary(words: list[dict], page_width: float) -> float | None:
+    """Find a vertical gutter in the middle of the page that no word crosses and that
+    splits the words into two substantial groups — the signature of a 2-column layout.
+    Returns the gutter x, or None for a single-column page."""
+    lo, hi = 0.35 * page_width, 0.65 * page_width
+    step = max(page_width / 100.0, 1.0)
+    total = len(words)
+    best: tuple[float, int] | None = None
+    x = lo
+    while x <= hi:
+        straddlers = sum(1 for w in words if w["x0"] < x < w["x1"])
+        left = sum(1 for w in words if (w["x0"] + w["x1"]) / 2 < x)
+        right = total - left
+        if straddlers == 0 and left >= _COLUMN_GUTTER_MIN_SIDE * total and right >= _COLUMN_GUTTER_MIN_SIDE * total:
+            balance = abs(left - right)
+            if best is None or balance < best[1]:
+                best = (x, balance)
+        x += step
+    return best[0] if best else None
+
+
+def _words_to_text(words: list[dict], line_tolerance: float = 3.0) -> str:
+    """Reassemble words into lines (grouped by vertical position) then top-to-bottom,
+    left-to-right — the reading order within a single column."""
+    if not words:
+        return ""
+    ordered = sorted(words, key=lambda w: (round(w["top"] / line_tolerance), w["x0"]))
+    lines: list[str] = []
+    current: list[str] = []
+    current_key: float | None = None
+    for w in ordered:
+        key = round(w["top"] / line_tolerance)
+        if current_key is None or key == current_key:
+            current.append(w["text"])
+        else:
+            lines.append(" ".join(current))
+            current = [w["text"]]
+        current_key = key
+    if current:
+        lines.append(" ".join(current))
+    return "\n".join(lines)
 
 
 def _safe_extract_table(table: Any) -> list[list[str]]:
@@ -459,7 +576,7 @@ def _detect_header_row(rows: list[list[str]]) -> int:
     non-numeric AND is followed by a row of the same width with some numeric/populated
     cells. Real spreadsheets often carry a title/blank band above the true header, which
     would otherwise be mistaken for the header and shift every column."""
-    for i in range(min(len(rows) - 1, 10)):
+    for i in range(min(len(rows) - 1, _HEADER_SCAN_ROWS)):
         row = rows[i]
         nonblank = [c for c in row if c.strip()]
         if len(nonblank) < 2:
@@ -467,12 +584,50 @@ def _detect_header_row(rows: list[list[str]]) -> int:
         numeric_ratio = sum(1 for c in nonblank if _looks_numeric(c)) / len(nonblank)
         nxt = rows[i + 1]
         next_populated = sum(1 for c in nxt if c.strip())
-        if numeric_ratio < 0.3 and next_populated >= 2 and len(nxt) == len(row):
+        if numeric_ratio < _HEADER_MAX_NUMERIC_RATIO and next_populated >= 2 and len(nxt) == len(row):
             return i
     return 0
 
 
+def _sheet_text(sheet_name: str, raw_rows: list[list[str]], truncated: bool, settings) -> str:
+    """Turn a sheet's non-empty rows into the pipe-delimited page text the inventory
+    chunker expects: one `# Sheet:` title line (a preamble/title band folded into it),
+    then the detected header (merged header cells forward-filled), then data rows."""
+    title = f"# Sheet: {sheet_name}"
+    body_lines: list[str] = []
+    if raw_rows:
+        header_idx = _detect_header_row(raw_rows)
+        preamble = [" ".join(c for c in r if c.strip()) for r in raw_rows[:header_idx]]
+        preamble = [p for p in preamble if p]
+        if preamble:
+            title = f"{title} | {' / '.join(preamble)}"
+        header = _forward_fill_header(raw_rows[header_idx])
+        body_lines.append(" | ".join(header))
+        for r in raw_rows[header_idx + 1 :]:
+            body_lines.append(" | ".join(r))
+    text = "\n".join([title, *body_lines])
+    if truncated:
+        text += f"\n# NOTE: sheet truncated at {settings.max_rows_per_sheet} rows (MAX_ROWS_PER_SHEET)"
+    return text
+
+
 def _parse_xlsx(path: str, settings) -> ParseResult:
+    """Small workbooks are loaded fully so merged cells (including merged *data* cells, not
+    just headers) can be expanded correctly; large ones stream in read-only mode to bound
+    memory, handling only merged headers via forward-fill."""
+    try:
+        size_mb = Path(path).stat().st_size / (1024 * 1024)
+    except OSError:
+        size_mb = 0.0
+    if size_mb <= settings.xlsx_full_load_max_mb:
+        try:
+            return _parse_xlsx_full(path, settings)
+        except Exception:
+            logger.exception("Full XLSX load failed for %s; falling back to streaming", path)
+    return _parse_xlsx_streaming(path, settings)
+
+
+def _parse_xlsx_streaming(path: str, settings) -> ParseResult:
     wb = load_workbook(path, data_only=True, read_only=True)
     pages = []
     for idx, sheet_name in enumerate(wb.sheetnames, start=1):
@@ -486,27 +641,40 @@ def _parse_xlsx(path: str, settings) -> ParseResult:
             if len(raw_rows) >= settings.max_rows_per_sheet:
                 truncated = True
                 break
+        pages.append(ParsedPage(page=idx, text=_sheet_text(sheet_name, raw_rows, truncated, settings)))
+    wb.close()
+    return ParseResult(pages=pages, page_count=len(pages))
 
-        # A single leading "# Sheet:" line stays the chunker's title (it only reads one),
-        # so fold any preamble rows above the detected header into that same line rather
-        # than emitting extra rows the inventory chunker would treat as the header.
-        title = f"# Sheet: {sheet_name}"
-        body_lines: list[str] = []
-        if raw_rows:
-            header_idx = _detect_header_row(raw_rows)
-            preamble = [" ".join(c for c in r if c.strip()) for r in raw_rows[:header_idx]]
-            preamble = [p for p in preamble if p]
-            if preamble:
-                title = f"{title} | {' / '.join(preamble)}"
-            header = _forward_fill_header(raw_rows[header_idx])
-            body_lines.append(" | ".join(header))
-            for r in raw_rows[header_idx + 1 :]:
-                body_lines.append(" | ".join(r))
 
-        text = "\n".join([title, *body_lines])
-        if truncated:
-            text += f"\n# NOTE: sheet truncated at {settings.max_rows_per_sheet} rows (MAX_ROWS_PER_SHEET)"
-        pages.append(ParsedPage(page=idx, text=text))
+def _parse_xlsx_full(path: str, settings) -> ParseResult:
+    wb = load_workbook(path, data_only=True)
+    pages = []
+    for idx, sheet_name in enumerate(wb.sheetnames, start=1):
+        ws = wb[sheet_name]
+        matrix: list[list] = [list(row) for row in ws.iter_rows(values_only=True)]
+        # Expand every merged range: openpyxl reports the value only in the top-left anchor
+        # cell and None for the rest, so fill the whole rectangle with the anchor value.
+        for rng in ws.merged_cells.ranges:
+            if rng.min_row - 1 >= len(matrix):
+                continue
+            anchor_row = matrix[rng.min_row - 1]
+            anchor = anchor_row[rng.min_col - 1] if rng.min_col - 1 < len(anchor_row) else None
+            for r in range(rng.min_row - 1, rng.max_row):
+                if r >= len(matrix):
+                    break
+                for c in range(rng.min_col - 1, rng.max_col):
+                    if c < len(matrix[r]):
+                        matrix[r][c] = anchor
+        raw_rows: list[list[str]] = []
+        truncated = False
+        for row in matrix:
+            values = [str(c) if c is not None else "" for c in row]
+            if any(v.strip() for v in values):
+                raw_rows.append(values)
+            if len(raw_rows) >= settings.max_rows_per_sheet:
+                truncated = True
+                break
+        pages.append(ParsedPage(page=idx, text=_sheet_text(sheet_name, raw_rows, truncated, settings)))
     wb.close()
     return ParseResult(pages=pages, page_count=len(pages))
 

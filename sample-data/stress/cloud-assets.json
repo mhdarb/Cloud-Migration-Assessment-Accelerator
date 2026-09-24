@@ -1,0 +1,28 @@
+{
+  "generatedBy": "cloud-discovery-tool",
+  "inventory": {
+    "assets": [
+      {
+        "asset_id": "vm-101",
+        "name": "ord-api-01",
+        "vcpu": 8,
+        "memory_gb": 32,
+        "os": "RHEL 9"
+      },
+      {
+        "asset_id": "vm-102",
+        "name": "pay-svc-01",
+        "vcpu": 4,
+        "memory_gb": 16,
+        "os": "Windows Server 2022"
+      },
+      {
+        "asset_id": "vm-103",
+        "name": "fleet-db-01",
+        "vcpu": 16,
+        "memory_gb": 64,
+        "os": "Ubuntu 22.04"
+      }
+    ]
+  }
+}
