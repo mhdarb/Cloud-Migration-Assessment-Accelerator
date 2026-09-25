@@ -40,6 +40,7 @@ class SizingFact:
     server_key: str
     vcpus: float | None = None
     memory_gb: float | None = None
+    disk_gb: float | None = None
     os: str | None = None
 
 
@@ -55,6 +56,7 @@ class RetrievalProbe:
 class EstateLabels:
     name: str
     files: tuple[tuple[str, str], ...]  # (filename, content_type)
+    subdir: str = ""  # path under sample-data/ where this estate's files live ("" = root)
     expected_servers: frozenset[str] = frozenset()
     expected_applications: frozenset[str] = frozenset()
     expected_databases: frozenset[str] = frozenset()
@@ -170,7 +172,12 @@ def score_extraction(db: Session, assessment_id: str, labels: EstateLabels) -> d
     correct = 0
     for fact in labels.sizing:
         attrs = server_rows.get(fact.server_key, {})
-        for field_name, expected in (("vcpus", fact.vcpus), ("memory_gb", fact.memory_gb), ("os", fact.os)):
+        for field_name, expected in (
+            ("vcpus", fact.vcpus),
+            ("memory_gb", fact.memory_gb),
+            ("disk_gb", fact.disk_gb),
+            ("os", fact.os),
+        ):
             if expected is None:
                 continue
             checks += 1

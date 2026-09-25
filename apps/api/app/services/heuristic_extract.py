@@ -11,7 +11,7 @@ from app.schemas.chunking import ChunkPayload
 
 # Single source of truth for the column-alias vocabulary lives in `normalization`;
 # re-exported here because `chunkers` and existing callers import these names from this module.
-from app.services.normalization import INFRA_COLUMN_ALIASES
+from app.services.normalization import CAPACITY_ATTRIBUTES, INFRA_COLUMN_ALIASES, header_unit
 from app.services.normalization import canonical_header as _canonical_header
 
 
@@ -224,9 +224,13 @@ def _extract_inventory_columns(chunk: Chunk) -> list[ExtractedClaim]:
     lines = [line for line in chunk.text.splitlines() if "|" in line]
     if not lines:
         return []
-    headers = [_canonical_header(c) for c in lines[0].split("|")]
+    raw_headers = lines[0].split("|")
+    headers = [_canonical_header(c) for c in raw_headers]
     if "server" not in headers:
         return []
+    # A capacity column can carry its unit in the header ("RAM (MB)", "Disk (GB)") with a
+    # unitless value; capture it so the value gets normalized correctly downstream.
+    units = [header_unit(c) for c in raw_headers]
     server_idx = headers.index("server")
     supported = set(INFRA_COLUMN_ALIASES) - {"server"}
     claims: list[ExtractedClaim] = []
@@ -238,12 +242,24 @@ def _extract_inventory_columns(chunk: Chunk) -> list[ExtractedClaim]:
         for idx, attribute in enumerate(headers):
             if attribute not in supported or idx >= len(cells) or not cells[idx]:
                 continue
+            value = cells[idx]
+            unit = units[idx]
+            # Stamp the header's unit onto a bare numeric value, but only when it's a
+            # non-canonical unit (MB/TB/...) that actually changes the magnitude — a "GB"
+            # header needs no rewrite since GB is already the canonical unit.
+            if (
+                attribute in CAPACITY_ATTRIBUTES
+                and unit
+                and unit not in {"gb", "gib"}
+                and not re.search(r"[a-zA-Z]", value)
+            ):
+                value = f"{value} {unit}"
             claims.append(
                 make_claim(
                     "server",
                     normalize_key(server),
                     attribute,
-                    cells[idx],
+                    value,
                     chunk_id=chunk.id,
                     quote=line,
                     confidence=0.9,
@@ -307,6 +323,14 @@ def heuristic_extract(chunks: list[Chunk], docs: dict[str, Document]) -> Extract
         conf_base = 0.9 if is_inventory else 0.75
         if is_inventory:
             claims.extend(_extract_inventory_columns(chunk))
+        # A "hostname-first" inventory (first column is the server, no application column,
+        # e.g. a discovery-tool export keyed by Hostname/name) must NOT go through the
+        # generic app|server|db positional mapping below — that would mislabel the hostname
+        # as an application and the vCPU cell as a server. Its rows are already handled by
+        # `_extract_inventory_columns`; the positional block stays for app-first CMDBs.
+        pipe_lines = [ln for ln in text.splitlines() if "|" in ln and not ln.strip().startswith("#")]
+        inv_headers = [_canonical_header(c) for c in pipe_lines[0].split("|")] if pipe_lines else []
+        hostname_first = bool(inv_headers) and inv_headers[0] == "server" and "application" not in inv_headers
 
         for line in text.splitlines():
             cells = [c.strip() for c in line.split("|")]
@@ -351,7 +375,7 @@ def heuristic_extract(chunks: list[Chunk], docs: dict[str, Document]) -> Extract
                     )
                     continue
 
-            if len(cells) >= 3 and (is_inventory or len(cells) >= 5):
+            if len(cells) >= 3 and (is_inventory or len(cells) >= 5) and not hostname_first:
                 app, server, database = cells[0], cells[1], cells[2]
                 app_c = clean_name(app)
                 if not app_c or not re.match(r"^[a-z0-9]", server, re.I):

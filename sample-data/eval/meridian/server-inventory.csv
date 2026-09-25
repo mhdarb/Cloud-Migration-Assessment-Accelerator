@@ -1,0 +1,5 @@
+Hostname,Cores,RAM (MB),Disk (GB),Operating System,Environment
+mh-web-01,4,16384,200,CentOS 7,prod
+mh-web-02,4,16384,200,CentOS 7,prod
+mh-app-01,8,32768,500,RHEL 9,prod
+mh-db-01,16,65536,2000,Debian 12,prod

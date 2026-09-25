@@ -1,0 +1,9 @@
+hostname,vcpu,memory_gb,disk_gb,os,environment
+orion-web-01,4,16,200,RHEL 9,prod
+orion-web-02,4,16,200,RHEL 9,prod
+orion-app-01,8,32,500,Windows Server 2022,prod
+orion-db-01,16,128,2000,Oracle Linux 8,prod
+orion-legacy-01,8,32,500,AIX 7.2,prod
+orion-legacy-02,4,16,200,Solaris 11,prod
+orion-cache-01,4,16,100,Ubuntu 22.04,prod
+orion-mq-01,4,16,100,Debian 12,prod

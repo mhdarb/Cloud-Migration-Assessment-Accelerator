@@ -63,13 +63,14 @@ def main() -> int:
             session.commit()
             session.refresh(row)
             assessment_id = row.id
+            base = SAMPLE_DATA / labels.subdir if labels.subdir else SAMPLE_DATA
             for filename, content_type in labels.files:
                 session.add(
                     Document(
                         assessment_id=assessment_id,
                         filename=filename,
                         content_type=content_type,
-                        storage_path=str(SAMPLE_DATA / filename),
+                        storage_path=str(base / filename),
                         doc_type=DocumentType.unknown,
                     )
                 )

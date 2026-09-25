@@ -132,6 +132,19 @@ def canonical_header(value: str) -> str:
     return key
 
 
+# Capacity fields whose *value* is unitless when the unit lives in the header instead
+# (e.g. a "RAM (MB)" or "Disk (GB)" column with cells like "16384"). Common in real CMDB
+# exports — extraction stamps the header's unit onto the value so `to_canonical` converts.
+CAPACITY_ATTRIBUTES = frozenset({"memory_gb", "disk_gb", "disk_throughput_mbps"})
+_HEADER_UNIT_RE = re.compile(r"\b(mb|mib|gb|gib|tb|tib|kb|pb|pib)\b")
+
+
+def header_unit(raw_header: str) -> str | None:
+    """A capacity unit named in a column header (e.g. "Memory (MB)" -> "mb"), or None."""
+    match = _HEADER_UNIT_RE.search(raw_header.lower())
+    return match.group(1) if match else None
+
+
 def _capacity_gb(number: float, unit: str) -> float:
     token = _UNIT.match(unit)
     key = token.group() if token else ""

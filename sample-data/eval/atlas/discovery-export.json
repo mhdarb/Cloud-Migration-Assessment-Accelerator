@@ -1,0 +1,33 @@
+{
+  "generatedBy": "cloud-discovery-tool",
+  "resources": [
+    {
+      "name": "atlas-web-01",
+      "vcpu": 4,
+      "memory": "16 GB",
+      "disk": "500 GB",
+      "os": "Ubuntu 22.04"
+    },
+    {
+      "name": "atlas-web-02",
+      "vcpu": 4,
+      "memory": "16 GB",
+      "disk": "500 GB",
+      "os": "Ubuntu 22.04"
+    },
+    {
+      "name": "atlas-cart-01",
+      "vcpu": 8,
+      "memory": "32 GB",
+      "disk": "1 TB",
+      "os": "RHEL 9"
+    },
+    {
+      "name": "atlas-db-01",
+      "vcpu": 16,
+      "memory": "128 GB",
+      "disk": "2 TB",
+      "os": "Windows Server 2022"
+    }
+  ]
+}

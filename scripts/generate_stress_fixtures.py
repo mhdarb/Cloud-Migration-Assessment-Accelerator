@@ -9,6 +9,7 @@ documents each exercise a specific parsing/chunking robustness path:
     capacity-report.pdf            two-column PDF (reading-order reflow)
     rack-layout.pdf                borderless / whitespace-aligned PDF table
     scanned-runbook.pdf            image-only PDF (empty-extraction gap / OCR)
+    protected-capacity-plan.pdf    password-protected PDF (unreadable-document gap)
     cmdb-export.xlsx               multi-sheet: title band, merged DATA cells, hidden
                                    second header row (shape guard), sizing summary
     fleet-inventory.csv            large flat CMDB CSV (row grouping + summary)
@@ -162,6 +163,34 @@ def write_borderless_pdf() -> None:
         y -= 20
     c.showPage()
     c.save()
+
+
+def write_encrypted_pdf() -> None:
+    """A password-protected (encrypted) PDF — exercises the parse-error / unreadable-document
+    gap. Enterprise doc dumps routinely include protected PDFs; they can't be extracted
+    without the password, so ingest must surface a visible gap, not crash or silently drop
+    them."""
+    import io
+
+    from pypdf import PdfReader, PdfWriter
+    from reportlab.lib.pagesizes import letter
+    from reportlab.pdfgen import canvas
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=letter)
+    c.setFont("Helvetica", 12)
+    c.drawString(72, 720, "Zephyr Logistics — Confidential Capacity Plan (protected).")
+    c.showPage()
+    c.save()
+    buf.seek(0)
+
+    reader = PdfReader(buf)
+    writer = PdfWriter()
+    for page in reader.pages:
+        writer.add_page(page)
+    writer.encrypt("s3cret")  # user password -> cannot be opened/extracted without it
+    with open(OUT / "protected-capacity-plan.pdf", "wb") as handle:
+        writer.write(handle)
 
 
 def write_scanned_pdf() -> None:
@@ -480,6 +509,7 @@ robustness (distinct from the clean Contoso golden set in `sample-data/`).
 | `capacity-report.pdf` | PDF | architecture | two-column reading-order reflow |
 | `rack-layout.pdf` | PDF | inventory | borderless (whitespace-aligned) table recovery |
 | `scanned-runbook.pdf` | PDF | runbook | image-only → empty-extraction gap / OCR |
+| `protected-capacity-plan.pdf` | PDF | — | password-protected → unreadable-document gap |
 | `cmdb-export.xlsx` | XLSX | inventory | title band, merged DATA cells, hidden 2nd header (shape guard), summary |
 | `fleet-inventory.csv` | CSV | inventory | 60 rows → adaptive row grouping + computed summary |
 | `messy-inventory.csv` | CSV | inventory | ragged columns → shape-guard fallback gap |
@@ -512,6 +542,7 @@ def main() -> None:
         write_two_column_pdf,
         write_borderless_pdf,
         write_scanned_pdf,
+        write_encrypted_pdf,
         write_cmdb_xlsx,
         write_fleet_csv,
         write_messy_csv,

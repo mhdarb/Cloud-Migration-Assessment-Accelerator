@@ -53,8 +53,8 @@ def test_no_document_is_silently_empty(estate: Path):
             continue
         try:
             result = parse_file(str(path), path.name)
-        except ValueError:
-            continue  # a clear rejection is a visible signal
+        except Exception:
+            continue  # a parse error is a visible signal — ingest surfaces it as a gap
         pieces = DocumentChunker().chunk(result.pages, doc_type=result.doc_type, filename=path.name)
         chars = sum(len(p.text.strip()) for p in result.pages)
         assert pieces or result.warnings or chars == 0 and result.warnings, (
@@ -72,6 +72,13 @@ def test_scanned_pdf_warns(estate: Path):
 
 def test_empty_text_warns(estate: Path):
     assert _parse(estate, "empty-notes.txt").warnings
+
+
+def test_protected_pdf_is_rejected(estate: Path):
+    """A password-protected PDF can't be extracted — it must raise (which ingest turns
+    into an unreadable-document gap), never parse to silent empty content."""
+    with pytest.raises(Exception):
+        _parse(estate, "protected-capacity-plan.pdf")
 
 
 def test_legacy_doc_rejected(estate: Path):

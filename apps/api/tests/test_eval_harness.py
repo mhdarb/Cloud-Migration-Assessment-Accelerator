@@ -15,8 +15,8 @@ import pytest
 
 from app.config import get_settings
 from app.models.entities import Document, DocumentType
-from app.services.eval_datasets import CONTOSO
-from app.services.eval_harness import evaluate, run_pipeline
+from app.services.eval_datasets import ALL_ESTATES
+from app.services.eval_harness import EstateLabels, evaluate, run_pipeline
 from app.services.eval_metrics import mean, precision_at_k, prf1, recall_at_k, reciprocal_rank
 
 SAMPLE_DATA = Path(__file__).resolve().parents[3] / "sample-data"
@@ -60,20 +60,16 @@ def test_mean():
 
 
 # --------------------------------------------------------------------------- #
-# Contoso regression gate (deterministic mock/heuristic pipeline)
+# Multi-estate regression gate (deterministic mock/heuristic pipeline)
 # --------------------------------------------------------------------------- #
-@pytest.mark.eval
-def test_contoso_eval_meets_regression_floors(db_session, assessment, monkeypatch):
-    monkeypatch.setenv("MOCK_LLM", "true")
-    monkeypatch.setenv("LOCAL_EMBEDDINGS", "true")
-    get_settings.cache_clear()
-
-    for filename, content_type in CONTOSO.files:
-        path = SAMPLE_DATA / filename
-        assert path.exists(), f"missing sample-data fixture: {filename}"
+def _ingest_estate(db_session, assessment_id: str, labels: EstateLabels) -> None:
+    base = SAMPLE_DATA / labels.subdir if labels.subdir else SAMPLE_DATA
+    for filename, content_type in labels.files:
+        path = base / filename
+        assert path.exists(), f"missing eval fixture: {labels.subdir}/{filename}"
         db_session.add(
             Document(
-                assessment_id=assessment.id,
+                assessment_id=assessment_id,
                 filename=filename,
                 content_type=content_type,
                 storage_path=str(path),
@@ -82,26 +78,50 @@ def test_contoso_eval_meets_regression_floors(db_session, assessment, monkeypatc
         )
     db_session.commit()
 
-    retriever = run_pipeline(db_session, assessment.id, use_mock=True)
-    report = evaluate(db_session, assessment.id, CONTOSO, retriever, top_k=get_settings().rag_top_k)
 
-    # Print the full report so `pytest -s -m eval` doubles as the measurement view.
+@pytest.mark.eval
+@pytest.mark.parametrize("estate_name", sorted(ALL_ESTATES))
+def test_estate_eval_meets_regression_floors(estate_name, db_session, assessment, monkeypatch):
+    monkeypatch.setenv("MOCK_LLM", "true")
+    monkeypatch.setenv("LOCAL_EMBEDDINGS", "true")
+    get_settings.cache_clear()
+
+    labels = ALL_ESTATES[estate_name]
+    _ingest_estate(db_session, assessment.id, labels)
+
+    retriever = run_pipeline(db_session, assessment.id, use_mock=True)
+    report = evaluate(db_session, assessment.id, labels, retriever, top_k=get_settings().rag_top_k)
+
+    # Print each report so `pytest -s -m eval` doubles as the measurement view.
     print("\n" + report.format_table())
 
-    ret = report.retrieval
-    ext = report.extraction
-    # Floors are set just below what the deterministic path currently achieves — a
-    # regression tripwire, not an aspiration. Raise them as quality improves.
-    assert ret["mean_context_recall"] >= 0.80, ret
-    assert ret["mean_reciprocal_rank"] >= 0.80, ret
-    assert ext["server_f1"] >= 0.90, ext
-    assert ext["sizing_field_accuracy"] >= 0.85, ext
-    assert ext["grounding_rate"] >= 0.60, ext
-    assert ext["nfr_coverage"] >= 0.85, ext
-    assert ext["sizing_coverage"] >= 0.75, ext
-    # application/database F1 are capped (~0.67 / ~0.75) by known noise entities the
-    # heuristic extractor emits (e.g. the "db-and" pseudo-app from a case-insensitive
-    # regex). The harness now *quantifies* that precision gap — a prime candidate for the
-    # next quality pass. These floors guard against it getting worse.
-    assert ext["application_f1"] >= 0.60, ext
-    assert ext["database_f1"] >= 0.70, ext
+    # Tight per-estate floors just below observed — a regression tripwire, not an
+    # aspiration. Contoso's app/db F1 are lower because of known heuristic-extractor noise
+    # (the "db-and" pseudo-app from a case-insensitive regex); the cleaner hostname-first
+    # (meridian) and discovery-export (atlas) estates hit 1.0, so they're guarded tightly.
+    floors = dict(_DEFAULT_FLOORS)
+    floors.update(_ESTATE_FLOORS.get(estate_name, {}))
+    scores = {**report.retrieval, **report.extraction}
+    for metric, floor in floors.items():
+        assert scores[metric] >= floor, (estate_name, metric, scores[metric], floor)
+
+
+_DEFAULT_FLOORS = {
+    "mean_context_recall": 0.90,
+    "mean_reciprocal_rank": 0.80,
+    "server_f1": 0.90,
+    "application_f1": 0.90,
+    "database_f1": 0.90,
+    "sizing_field_accuracy": 0.90,
+    "grounding_rate": 0.90,
+    "nfr_coverage": 0.90,
+    "sizing_coverage": 0.70,
+}
+# Per-estate overrides where a metric is legitimately lower than the strict default:
+#  - contoso: known extractor noise (the "db-and" pseudo-app) caps app/db F1.
+#  - orion: 3 of 8 hosts are intentionally unsizable (AIX + Solaris are unsupported, and
+#    the 16-vCPU DB host exceeds the local catalog), so sizing_coverage floors at 0.625.
+_ESTATE_FLOORS = {
+    "contoso": {"application_f1": 0.60, "database_f1": 0.70},
+    "orion": {"sizing_coverage": 0.60},
+}

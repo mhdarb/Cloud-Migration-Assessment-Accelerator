@@ -9,6 +9,7 @@ robustness (distinct from the clean Contoso golden set in `sample-data/`).
 | `capacity-report.pdf` | PDF | architecture | two-column reading-order reflow |
 | `rack-layout.pdf` | PDF | inventory | borderless (whitespace-aligned) table recovery |
 | `scanned-runbook.pdf` | PDF | runbook | image-only → empty-extraction gap / OCR |
+| `protected-capacity-plan.pdf` | PDF | — | password-protected → unreadable-document gap |
 | `cmdb-export.xlsx` | XLSX | inventory | title band, merged DATA cells, hidden 2nd header (shape guard), summary |
 | `fleet-inventory.csv` | CSV | inventory | 60 rows → adaptive row grouping + computed summary |
 | `messy-inventory.csv` | CSV | inventory | ragged columns → shape-guard fallback gap |
