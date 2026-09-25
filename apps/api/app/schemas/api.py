@@ -220,6 +220,26 @@ class AssessmentAnswersOut(BaseModel):
     review_required: bool
 
 
+class QuestionnaireOut(BaseModel):
+    id: str
+    filename: str
+    file_format: str
+    question_count: int
+    created_at: datetime
+    answered_format: str  # what "Download answered" returns (PDF sources come back as xlsx)
+
+    @field_validator("created_at", mode="after")
+    @classmethod
+    def _utc(cls, value: datetime) -> datetime | None:
+        return _as_utc(value)
+
+
+class QuestionnaireAnswersOut(BaseModel):
+    questionnaire: QuestionnaireOut
+    answers: list[dict[str, Any]]
+    review_required: bool
+
+
 class AskQuestionRequest(BaseModel):
     question: str = Field(min_length=1, max_length=500)
 

@@ -2,45 +2,23 @@
 
 import { useState } from "react";
 import type { AssessmentAnswers } from "@/lib/api";
-import { EvidenceTrace } from "@/components/EvidenceTrace";
-
-function AnswerCard({
-  answer,
-}: {
-  answer: AssessmentAnswers["answers"][number];
-}) {
-  return (
-    <div className="card p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <h3 className="font-semibold">{answer.question}</h3>
-        <span className="sans text-xs text-[var(--muted)]">
-          {Math.round(answer.confidence * 100)}% confidence ·{" "}
-          {answer.supported ? "source-linked" : "evidence gap"}
-          {answer.answer_source ? ` · ${answer.answer_source}` : ""}
-          {answer.origin && answer.origin !== "standard" ? ` · ${answer.origin.replaceAll("_", "-")}` : ""}
-        </span>
-      </div>
-      <p className="sans mt-2 text-sm">{answer.answer}</p>
-      {answer.assumptions.map((assumption) => (
-        <p className="sans mt-2 text-xs text-amber-700" key={assumption}>
-          Review: {assumption}
-        </p>
-      ))}
-      <div className="sans mt-3">
-        <EvidenceTrace evidence={answer.evidence} />
-      </div>
-    </div>
-  );
-}
+import { AnswerCard } from "@/components/assessment/AnswerCard";
+import { QuestionnairePanel } from "@/components/assessment/QuestionnairePanel";
 
 export function QuestionsTab({
+  assessmentId,
+  status,
   answers,
   busy,
   onAsk,
+  onError,
 }: {
+  assessmentId: string;
+  status: string;
   answers: AssessmentAnswers | null;
   busy?: boolean;
   onAsk?: (question: string) => Promise<boolean>;
+  onError: (message: string | null) => void;
 }) {
   const [draft, setDraft] = useState("");
   const all = answers?.answers || [];
@@ -50,6 +28,8 @@ export function QuestionsTab({
 
   return (
     <div className="space-y-6">
+      <QuestionnairePanel assessmentId={assessmentId} status={status} onError={onError} />
+
       <div>
         <div className="flex items-center justify-between">
           <h2 className="text-xl">Standard migration assessment questions</h2>
@@ -87,8 +67,8 @@ export function QuestionsTab({
       <div>
         <h2 className="text-xl">Engagement questions</h2>
         <p className="sans mt-1 text-sm text-[var(--muted)]">
-          From uploaded questionnaires and questions you ask here. Answers use selected
-          claims and retrieved source quotes only.
+          Questions found in questionnaire documents among the evidence, and questions you
+          ask here. Answers use selected claims and retrieved source quotes only.
         </p>
         {onAsk && (
           <div className="card mt-4 p-4">
@@ -119,7 +99,7 @@ export function QuestionsTab({
           ))}
           {!engagement.length && (
             <div className="sans text-sm text-[var(--muted)]">
-              No engagement questions yet. Upload a questionnaire or ask above.
+              No engagement questions yet. Ask one above.
             </div>
           )}
         </div>

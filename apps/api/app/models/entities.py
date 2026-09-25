@@ -80,6 +80,9 @@ class QuestionOrigin(str, enum.Enum):
     uploaded = "uploaded"
     ad_hoc = "ad_hoc"
     dynamic = "dynamic"
+    # From a client questionnaire uploaded to be *answered* (Questions tab), as opposed to
+    # `uploaded` — questions parsed out of a questionnaire ingested as evidence.
+    questionnaire = "questionnaire"
 
 
 class Assessment(Base):
@@ -375,6 +378,41 @@ class EngagementQuestion(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     assessment: Mapped[Assessment] = relationship(back_populates="engagement_questions")
+
+
+class Questionnaire(Base):
+    """A client questionnaire uploaded to be answered (not ingested as evidence). The file
+    is kept so answers can be written back into it on download."""
+
+    __tablename__ = "questionnaires"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    assessment_id: Mapped[str] = mapped_column(ForeignKey("assessments.id"), index=True)
+    filename: Mapped[str] = mapped_column(String(255))
+    storage_path: Mapped[str] = mapped_column(String(1024))
+    file_format: Mapped[str] = mapped_column(String(16))  # xlsx | csv | docx | txt | md | pdf
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    # Answers are expensive (retrieval + LLM per question), so the last computed set is
+    # kept with a fingerprint of the state it was computed from (pipeline run + review
+    # decisions); previewing and then downloading costs one computation, not two.
+    answers_cache: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    answers_fingerprint: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+
+class QuestionnaireItem(Base):
+    """One question in an uploaded questionnaire, plus where it sits in the file so the
+    answer can be written back beside it. Deliberately *not* an `EngagementQuestion`: a
+    client's 200-question sheet must not flood the Questions tab or the report, and it is
+    answered on demand rather than on every pipeline run."""
+
+    __tablename__ = "questionnaire_items"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    questionnaire_id: Mapped[str] = mapped_column(ForeignKey("questionnaires.id"), index=True)
+    position: Mapped[int] = mapped_column(Integer)
+    question: Mapped[str] = mapped_column(Text)
+    question_key: Mapped[str] = mapped_column(String(240))
+    locator: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
 class AssessmentOutput(Base):

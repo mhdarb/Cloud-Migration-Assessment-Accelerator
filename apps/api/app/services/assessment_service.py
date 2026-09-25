@@ -27,6 +27,7 @@ from app.services.inventory import load_inventory
 from app.services.llm_clients import DisabledChatCompleter
 from app.services.llm_reasoning import GroundedProse
 from app.services.ports import Retriever
+from app.services.questionnaires import delete_assessment_questionnaires
 from app.services.reconciliation import rematerialize_entities
 from app.services.report import generate_report
 from app.services.review import (
@@ -120,6 +121,7 @@ def delete_assessment(db: Session, assessment: Assessment) -> None:
     ).delete()
     # Review decisions survive re-runs by design, so they must be removed explicitly here.
     db.query(ReviewDecision).filter(ReviewDecision.assessment_id == assessment_id).delete()
+    delete_assessment_questionnaires(db, assessment_id)
     db.query(Document).filter(Document.assessment_id == assessment_id).delete()
     db.delete(assessment)
     db.commit()

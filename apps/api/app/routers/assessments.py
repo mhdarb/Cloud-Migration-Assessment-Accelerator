@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from urllib.parse import quote
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Response, UploadFile
 from sqlalchemy.orm import Session
@@ -34,11 +35,14 @@ from app.schemas.api import (
     FollowUpNoteRequest,
     GraphOut,
     InfrastructureRecommendationOut,
+    QuestionnaireAnswersOut,
+    QuestionnaireOut,
     ReportOut,
     ReviewDecisionRequest,
     ReviewStatusOut,
 )
 from app.services import assessment_service as assessments
+from app.services import questionnaires
 from app.services.assessment_questions import build_assessment_answers
 from app.services.evidence import build_evidence_list, resolve_evidence, resolve_evidence_map
 from app.services.graph import build_graph, get_blast_radius
@@ -432,6 +436,106 @@ def ask_assessment_question(
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     return AssessmentAnswersOut.model_validate(result)
+
+
+_QUESTIONNAIRE_BUSY = (
+    "A pipeline run is queued or in progress; questionnaire answers will be available "
+    "once it finishes."
+)
+
+
+@contextmanager
+def _questionnaire_errors() -> Iterator[None]:
+    try:
+        yield
+    except questionnaires.QuestionnaireNotFound as exc:
+        raise HTTPException(404, "Questionnaire not found") from exc
+    except questionnaires.QuestionnaireBusy as exc:
+        raise HTTPException(409, _QUESTIONNAIRE_BUSY) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/{assessment_id}/questionnaires", response_model=QuestionnaireOut)
+async def upload_questionnaire(
+    assessment_id: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> QuestionnaireOut:
+    assessment = _assessment(db, assessment_id)
+    with _questionnaire_errors():
+        created = await questionnaires.import_questionnaire(db, assessment, file)
+    return QuestionnaireOut(**questionnaires.questionnaire_summary(db, created))
+
+
+@router.get("/{assessment_id}/questionnaires", response_model=list[QuestionnaireOut])
+def list_questionnaires(assessment_id: str, db: Session = Depends(get_db)) -> list[QuestionnaireOut]:
+    _assessment(db, assessment_id)
+    return [
+        QuestionnaireOut(**questionnaires.questionnaire_summary(db, q))
+        for q in questionnaires.list_questionnaires(db, assessment_id)
+    ]
+
+
+@router.get(
+    "/{assessment_id}/questionnaires/{questionnaire_id}/answers",
+    response_model=QuestionnaireAnswersOut,
+)
+def get_questionnaire_answers(
+    assessment_id: str, questionnaire_id: str, db: Session = Depends(get_db)
+) -> QuestionnaireAnswersOut:
+    assessment = _assessment(db, assessment_id)
+    with _questionnaire_errors():
+        q = questionnaires.get_questionnaire(db, assessment_id, questionnaire_id)
+        answers = questionnaires.questionnaire_answers(
+            db, assessment, q, retriever=_questions_retriever()
+        )
+    return QuestionnaireAnswersOut(
+        questionnaire=QuestionnaireOut(**questionnaires.questionnaire_summary(db, q)),
+        answers=answers,
+        review_required=any(a.get("needs_human_review") for a in answers),
+    )
+
+
+@router.get("/{assessment_id}/questionnaires/{questionnaire_id}/download")
+def download_questionnaire(
+    assessment_id: str,
+    questionnaire_id: str,
+    format: str = "original",
+    db: Session = Depends(get_db),
+) -> Response:
+    if format not in {"original", "xlsx"}:
+        raise HTTPException(400, "format must be 'original' or 'xlsx'")
+    assessment = _assessment(db, assessment_id)
+    with _questionnaire_errors():
+        q = questionnaires.get_questionnaire(db, assessment_id, questionnaire_id)
+        data, filename, media_type = questionnaires.export_questionnaire(
+            db, assessment, q, summary=format == "xlsx", retriever=_questions_retriever()
+        )
+    return Response(
+        content=data,
+        media_type=media_type,
+        headers={"Content-Disposition": _attachment(filename)},
+    )
+
+
+@router.delete("/{assessment_id}/questionnaires/{questionnaire_id}", status_code=204)
+def delete_questionnaire(
+    assessment_id: str, questionnaire_id: str, db: Session = Depends(get_db)
+) -> Response:
+    _assessment(db, assessment_id)
+    with _questionnaire_errors():
+        questionnaires.delete_questionnaire(
+            db, questionnaires.get_questionnaire(db, assessment_id, questionnaire_id)
+        )
+    return Response(status_code=204)
+
+
+def _attachment(filename: str) -> str:
+    """Content-Disposition for a user-supplied name: an ASCII fallback plus the RFC 5987
+    UTF-8 form, so quotes/CR/LF in the name can't break (or inject into) the header."""
+    ascii_name = "".join(ch if 32 <= ord(ch) < 127 and ch not in '"\\' else "_" for ch in filename)
+    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}"
 
 
 @router.get(

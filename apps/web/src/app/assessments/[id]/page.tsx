@@ -204,7 +204,14 @@ function AssessmentDetail() {
         />
       )}
       {tab === "questions" && (
-        <QuestionsTab answers={answers} busy={busy} onAsk={onAskQuestion} />
+        <QuestionsTab
+          assessmentId={id}
+          status={assessment.status}
+          answers={answers}
+          busy={busy}
+          onAsk={onAskQuestion}
+          onError={setError}
+        />
       )}
       {tab === "sizing" && <SizingTab recommendations={recommendations} />}
       {tab === "findings" && (

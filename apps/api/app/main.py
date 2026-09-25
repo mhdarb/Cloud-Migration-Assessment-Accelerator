@@ -35,6 +35,8 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # The questionnaire download names its file here; browsers hide it cross-origin otherwise.
+    expose_headers=["Content-Disposition"],
 )
 
 app.include_router(assessments.router)

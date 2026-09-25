@@ -13,6 +13,8 @@ from app.services.llm_prompts import (
 )
 from app.services.ports import ChatCompleter
 
+REWRITE_BATCH_SIZE = 20
+
 
 class GroundedProse:
     def __init__(self, completer: ChatCompleter) -> None:
@@ -57,8 +59,18 @@ class GroundedProse:
                     "quotes": quotes[:8],
                 }
             )
-        if not payload:
-            return
+        # A client questionnaire can carry hundreds of questions; one call for all of them
+        # would overrun the model's output budget and lose every rewrite on truncation.
+        by_id: dict[str, str] = {}
+        for start in range(0, len(payload), REWRITE_BATCH_SIZE):
+            by_id.update(self._rewrite_batch(payload[start : start + REWRITE_BATCH_SIZE]))
+        for answer in answers:
+            text = by_id.get(answer["id"])
+            if text:
+                answer["answer"] = text
+                answer["answer_source"] = "llm"
+
+    def _rewrite_batch(self, payload: list[dict[str, Any]]) -> dict[str, str]:
         raw = self._completer.complete(
             QUESTION_REWRITE_SYSTEM,
             json.dumps(payload, ensure_ascii=True),
@@ -66,22 +78,17 @@ class GroundedProse:
             json_mode=True,
         )
         if not raw:
-            return
+            return {}
         try:
             parsed = json.loads(raw)
             rows = parsed.get("answers") if isinstance(parsed, dict) else parsed
-            by_id = {
-                item["id"]: item.get("text")
+            return {
+                item["id"]: item["text"]
                 for item in rows or []
                 if isinstance(item, dict) and item.get("id") and item.get("text")
             }
         except Exception:
-            return
-        for answer in answers:
-            text = by_id.get(answer["id"])
-            if text:
-                answer["answer"] = text
-                answer["answer_source"] = "llm"
+            return {}
 
     def explain_conflict(self, payload: dict[str, Any], fallback: str) -> str:
         if not self._completer.enabled:

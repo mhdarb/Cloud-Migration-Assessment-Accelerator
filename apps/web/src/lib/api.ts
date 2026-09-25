@@ -1,13 +1,24 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+/** FastAPI errors arrive as `{"detail": "..."}`; show the sentence, not the JSON. */
+async function errorFrom(res: Response): Promise<Error> {
+  const text = await res.text();
+  try {
+    const detail = JSON.parse(text)?.detail;
+    if (typeof detail === "string" && detail) return new Error(detail);
+  } catch {
+    /* not JSON */
+  }
+  return new Error(text || `Request failed: ${res.status}`);
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     ...init,
     cache: "no-store",
   });
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || `Request failed: ${res.status}`);
+    throw await errorFrom(res);
   }
   if (res.status === 204) {
     return undefined as T;
@@ -214,7 +225,9 @@ export type AssessmentAnswers = {
   question_set: string;
   answers: {
     id: string;
-    origin?: "standard" | "uploaded" | "ad_hoc" | "dynamic";
+    origin?: "standard" | "uploaded" | "ad_hoc" | "dynamic" | "questionnaire";
+    /** 1-based position in an uploaded client questionnaire. */
+    position?: number;
     question: string;
     answer: string;
     answer_source?: string;
@@ -228,6 +241,52 @@ export type AssessmentAnswers = {
   complete: boolean;
   review_required: boolean;
 };
+
+export type QuestionnaireFile = {
+  id: string;
+  filename: string;
+  file_format: string;
+  question_count: number;
+  created_at: string;
+  /** What "Download answered" returns: the client's own format, or xlsx for a PDF. */
+  answered_format: string;
+};
+
+export type QuestionnaireAnswers = {
+  questionnaire: QuestionnaireFile;
+  answers: AssessmentAnswers["answers"];
+  review_required: boolean;
+};
+
+/** Accepted questionnaire uploads (kept in sync with the API's questionnaire_io). */
+export const QUESTIONNAIRE_ACCEPT = ".xlsx,.xlsm,.csv,.docx,.txt,.md,.pdf";
+
+function filenameFrom(disposition: string | null, fallback: string): string {
+  const encoded = disposition?.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  if (encoded) {
+    try {
+      return decodeURIComponent(encoded);
+    } catch {
+      /* fall through */
+    }
+  }
+  return disposition?.match(/filename="([^"]+)"/i)?.[1] || fallback;
+}
+
+/** Fetch a file and hand it to the browser as a download. */
+async function download(path: string, fallbackName: string): Promise<void> {
+  const res = await fetch(`${API_URL}${path}`, { cache: "no-store" });
+  if (!res.ok) throw await errorFrom(res);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filenameFrom(res.headers.get("Content-Disposition"), fallbackName);
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 
 export type InfrastructureRecommendation = {
   id: string;
@@ -410,6 +469,25 @@ export const api = {
     requestJson<AssessmentAnswers>(`/assessments/${id}/assessment-questions/ask`, "POST", {
       question,
     }),
+  questionnaires: (id: string) =>
+    request<QuestionnaireFile[]>(`/assessments/${id}/questionnaires`),
+  uploadQuestionnaire: (id: string, file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return request<QuestionnaireFile>(`/assessments/${id}/questionnaires`, {
+      method: "POST",
+      body: form,
+    });
+  },
+  questionnaireAnswers: (id: string, questionnaireId: string) =>
+    request<QuestionnaireAnswers>(`/assessments/${id}/questionnaires/${questionnaireId}/answers`),
+  downloadQuestionnaire: (id: string, q: QuestionnaireFile, format: "original" | "xlsx") =>
+    download(
+      `/assessments/${id}/questionnaires/${q.id}/download?format=${format}`,
+      `answered.${format === "xlsx" ? "xlsx" : q.answered_format}`
+    ),
+  deleteQuestionnaire: (id: string, questionnaireId: string) =>
+    request<void>(`/assessments/${id}/questionnaires/${questionnaireId}`, { method: "DELETE" }),
   recommendations: (id: string) =>
     request<InfrastructureRecommendation[]>(`/assessments/${id}/recommendations`),
   report: (id: string) => request<Report>(`/assessments/${id}/report`),
