@@ -15,6 +15,7 @@ from app.services.normalization import (
     to_canonical,
 )
 from app.services.pricing import load_catalog, price_vm
+from app.services.text_format import number, plain_text
 
 UNSUPPORTED_OS_TOKENS = (
     "aix",
@@ -99,11 +100,32 @@ def _with_assumptions(profile: dict[str, Any]) -> tuple[dict[str, Any], list[str
     return result, assumptions
 
 
+def _explanation_facts(result: dict[str, Any]) -> dict[str, Any]:
+    """Only what a short explanation needs. The full result also carries every rejected
+    candidate, the raw input row and all alternatives, which invited long, list-heavy
+    answers and cost tokens on every server."""
+    return {
+        "server": result.get("server"),
+        "required": result.get("required"),
+        "recommended_sku": result.get("recommended_sku"),
+        "vm": {k: (result.get("vm") or {}).get(k) for k in ("family", "vcpus", "memory_gb")},
+        "disk": {k: (result.get("disk") or {}).get(k) for k in ("name", "type", "iops")},
+        "monthly_total": (result.get("pricing") or {}).get("monthly_total"),
+        "currency": (result.get("pricing") or {}).get("currency"),
+        "assumed_fields": result.get("assumed_fields"),
+        "failed_or_review_checks": [
+            c for c in result.get("compatibility_checks") or [] if c.get("status") != "pass"
+        ],
+        "needs_human_review": result.get("needs_human_review"),
+    }
+
+
 def _explanation(result: dict[str, Any], *, use_llm: bool = True) -> tuple[str, str]:
+    required = result["required"]
     facts = (
-        f"{result['server']} requires at least {result['required']['vcpus']} vCPUs, "
-        f"{result['required']['memory_gb']} GB RAM and disk meeting "
-        f"{result['required']['disk_iops']} IOPS."
+        f"{result['server']} requires at least {number(required['vcpus'])} vCPUs, "
+        f"{number(required['memory_gb'])} GB RAM and disk meeting "
+        f"{number(required['disk_iops'])} IOPS."
     )
     disk_name = (result.get("disk") or {}).get("name") or "the selected disk"
     fallback = (
@@ -118,8 +140,8 @@ def _explanation(result: dict[str, Any], *, use_llm: bool = True) -> tuple[str, 
     completer = get_chat_completer()
     if not completer.enabled:
         return fallback, "deterministic-template"
-    text = completer.complete(
-        SIZING_EXPLAIN_SYSTEM, json.dumps(result), temperature=0
+    text = plain_text(
+        completer.complete(SIZING_EXPLAIN_SYSTEM, json.dumps(_explanation_facts(result)), temperature=0)
     )
     if not text:
         return fallback, "deterministic-template-fallback"

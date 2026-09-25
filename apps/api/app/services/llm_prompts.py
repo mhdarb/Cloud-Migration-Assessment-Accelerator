@@ -57,5 +57,8 @@ READINESS_SUMMARY_SYSTEM = (
 
 SIZING_EXPLAIN_SYSTEM = (
     "Explain an Azure sizing result using only the supplied JSON. "
+    "Write 2-4 plain sentences, under 90 words: the capacity required, why the VM and "
+    "disk were chosen, and any assumption or review flag that matters. "
+    "Plain text only — no Markdown, headings, bold, bullet points or tables. "
     "Do not change the SKU, prices, assumptions, or compatibility result."
 )

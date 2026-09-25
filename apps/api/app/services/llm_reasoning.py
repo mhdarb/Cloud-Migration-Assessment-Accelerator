@@ -12,6 +12,7 @@ from app.services.llm_prompts import (
     READINESS_SUMMARY_SYSTEM,
 )
 from app.services.ports import ChatCompleter
+from app.services.text_format import plain_text
 
 REWRITE_BATCH_SIZE = 20
 
@@ -33,7 +34,7 @@ class GroundedProse:
             {"question": question, "facts": facts, "quotes": quotes[:8]},
             ensure_ascii=True,
         )
-        text = self._completer.complete(QUESTION_REWRITE_SYSTEM, user, temperature=0.1)
+        text = plain_text(self._completer.complete(QUESTION_REWRITE_SYSTEM, user, temperature=0.1))
         if not text:
             return fallback, "template"
         return text, "llm"
@@ -83,7 +84,7 @@ class GroundedProse:
             parsed = json.loads(raw)
             rows = parsed.get("answers") if isinstance(parsed, dict) else parsed
             return {
-                item["id"]: item["text"]
+                item["id"]: plain_text(item["text"])
                 for item in rows or []
                 if isinstance(item, dict) and item.get("id") and item.get("text")
             }
@@ -93,20 +94,24 @@ class GroundedProse:
     def explain_conflict(self, payload: dict[str, Any], fallback: str) -> str:
         if not self._completer.enabled:
             return fallback
-        text = self._completer.complete(
-            CONFLICT_NOTES_SYSTEM,
-            json.dumps(payload, ensure_ascii=True),
-            temperature=0.1,
+        text = plain_text(
+            self._completer.complete(
+                CONFLICT_NOTES_SYSTEM,
+                json.dumps(payload, ensure_ascii=True),
+                temperature=0.1,
+            )
         )
         return text or fallback
 
     def rewrite_readiness_summary(self, payload: dict[str, Any], fallback: str) -> str:
         if not self._completer.enabled:
             return fallback
-        text = self._completer.complete(
-            READINESS_SUMMARY_SYSTEM,
-            json.dumps(payload, ensure_ascii=True),
-            temperature=0.1,
+        text = plain_text(
+            self._completer.complete(
+                READINESS_SUMMARY_SYSTEM,
+                json.dumps(payload, ensure_ascii=True),
+                temperature=0.1,
+            )
         )
         return text or fallback
 

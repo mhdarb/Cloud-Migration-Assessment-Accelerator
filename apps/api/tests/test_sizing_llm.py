@@ -65,3 +65,46 @@ def test_explanation_uses_azure_when_enabled(monkeypatch):
     assert result["explanation_source"] == "azure-openai"
     assert result["explanation"] == "Azure sized this SKU."
     assert result["recommended_sku"].startswith("Standard_")
+
+
+MARKDOWN_REPLY = """### Sizing recommendation for **billing-01**
+
+The server needs **7 vCPUs** and *27 GB* of RAM, so `Standard_D8s_v5` was chosen.
+
+- **VM:** Standard_D8s_v5 (8 vCPU / 32 GB)
+- **Disk:** P30 Premium SSD
+"""
+
+
+def test_markdown_explanation_is_stored_as_plain_text(monkeypatch):
+    """Azure OpenAI answers in Markdown by habit; the UI and exports show it literally."""
+    seen: dict = {}
+
+    class Completer:
+        enabled = True
+        source = "azure-openai"
+
+        def complete(self, system, user, *, temperature=0.1, json_mode=False):
+            seen["system"], seen["user"] = system, user
+            return MARKDOWN_REPLY
+
+    monkeypatch.setattr("app.services.llm_clients.get_chat_completer", lambda: Completer())
+    result = size_profile(normalize_workload(_linux_server()))
+
+    text = result["explanation"]
+    assert not any(token in text for token in ("#", "**", "`", "- **"))
+    assert text.startswith("Sizing recommendation for billing-01")
+    assert "The server needs 7 vCPUs and 27 GB of RAM, so Standard_D8s_v5 was chosen." in text
+    assert "\n\n• VM: Standard_D8s_v5 (8 vCPU / 32 GB)\n• Disk: P30 Premium SSD" in text
+    # The prompt asks for plain prose, and only the facts a short explanation needs go out.
+    assert "no Markdown" in seen["system"]
+    assert "rejected_candidates" not in seen["user"] and "input_profile" not in seen["user"]
+    assert "Standard_D8s_v5" in seen["user"] or result["recommended_sku"] in seen["user"]
+
+
+def test_template_explanation_prints_whole_numbers_cleanly(monkeypatch):
+    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "")
+    monkeypatch.setenv("AZURE_OPENAI_API_KEY", "")
+    get_settings.cache_clear()
+    result = size_profile(normalize_workload(_linux_server()))
+    assert ".0 IOPS" not in result["explanation"]

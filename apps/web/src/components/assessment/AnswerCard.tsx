@@ -2,6 +2,7 @@
 
 import type { AssessmentAnswers } from "@/lib/api";
 import { EvidenceTrace } from "@/components/EvidenceTrace";
+import { plainText } from "@/lib/text";
 
 export function AnswerCard({
   answer,
@@ -24,7 +25,7 @@ export function AnswerCard({
           {showOrigin ? ` · ${answer.origin!.replaceAll("_", "-")}` : ""}
         </span>
       </div>
-      <p className="sans mt-2 text-sm">{answer.answer}</p>
+      <p className="sans mt-2 whitespace-pre-line text-sm">{plainText(answer.answer)}</p>
       {answer.assumptions.map((assumption) => (
         <p className="sans mt-2 text-xs text-amber-700" key={assumption}>
           Review: {assumption}

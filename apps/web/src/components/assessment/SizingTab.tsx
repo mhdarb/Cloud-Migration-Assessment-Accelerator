@@ -1,4 +1,5 @@
 import type { InfrastructureRecommendation } from "@/lib/api";
+import { explanationSourceLabel, fieldLabel, fieldList, num, plainText } from "@/lib/text";
 
 function skuName(item: Record<string, unknown>): string {
   if (typeof item.name === "string") return item.name;
@@ -77,7 +78,7 @@ export function SizingTab({
                 <div className="text-xl font-semibold">
                   {blocked
                     ? "—"
-                    : `${result.pricing.currency} ${result.pricing.monthly_total}/mo`}
+                    : `${result.pricing.currency} ${result.pricing.monthly_total.toFixed(2)}/mo`}
                 </div>
                 <div className="sans text-xs text-[var(--muted)]">
                   {blocked
@@ -86,24 +87,23 @@ export function SizingTab({
                 </div>
               </div>
             </div>
-            <p className="sans mt-3 text-sm">{result.explanation}</p>
+            <p className="sans mt-3 whitespace-pre-line text-sm">{plainText(result.explanation)}</p>
             {result.measured_fields && result.measured_fields.length > 0 && (
               <p className="sans mt-2 text-xs text-[var(--muted)]">
-                Measured: {result.measured_fields.join(", ")}
+                Measured: {fieldList(result.measured_fields)}
               </p>
             )}
             {result.assumed_fields && result.assumed_fields.length > 0 && (
               <p className="sans mt-1 text-xs text-amber-800">
-                Assumed (not measured): {result.assumed_fields.join(", ")}
+                Assumed (not measured): {fieldList(result.assumed_fields)}
               </p>
             )}
             <div className="sans mt-4 grid gap-3 text-sm md:grid-cols-3">
               <div className="rounded-lg bg-[#faf9f7] p-3">
-                Required: {result.required?.vcpus ?? "—"} vCPU /{" "}
-                {result.required?.memory_gb ?? "—"} GB RAM
+                Required: {num(result.required?.vcpus)} vCPU / {num(result.required?.memory_gb)} GB RAM
               </div>
               <div className="rounded-lg bg-[#faf9f7] p-3">
-                Disk: {result.required?.disk_gb ?? "—"} GB / {result.required?.disk_iops ?? "—"} IOPS
+                Disk: {num(result.required?.disk_gb)} GB / {num(result.required?.disk_iops)} IOPS
               </div>
               <div className="rounded-lg bg-[#faf9f7] p-3">
                 Confidence: {Math.round(result.confidence * 100)}%
@@ -131,12 +131,14 @@ export function SizingTab({
                         className={
                           check.status === "fail" || check.status === "failed"
                             ? "text-[var(--danger)]"
-                            : "text-[var(--success)]"
+                            : check.status === "pass" || check.status === "passed"
+                              ? "text-[var(--success)]"
+                              : "text-amber-700"
                         }
                       >
                         {check.status}
                       </span>
-                      {` · ${check.check}: ${check.detail}`}
+                      {` · ${fieldLabel(check.check)}: ${check.detail}`}
                     </li>
                   ))}
                 </ul>
@@ -166,8 +168,8 @@ export function SizingTab({
               </details>
             )}
             <div className="sans mt-4 text-xs text-[var(--muted)]">
-              Region {recommendation.region} · catalog {result.catalog_version || "n/a"} ·
-              explanation {result.explanation_source}
+              Region {recommendation.region} · catalog {result.catalog_version || "n/a"}
+              {result.explanation_source ? ` · ${explanationSourceLabel(result.explanation_source)}` : ""}
             </div>
           </div>
         );

@@ -1,5 +1,6 @@
 import type { Assessment, InfrastructureRecommendation, Report } from "@/lib/api";
 import { EvidenceTrace } from "@/components/EvidenceTrace";
+import { plainText } from "@/lib/text";
 
 function SummaryStat({ label, value }: { label: string; value: string | number }) {
   return (
@@ -64,7 +65,7 @@ export function ReportTab({
       </div>
       <div className="card p-5">
         <h2 className="mb-2 text-lg">Readiness summary</h2>
-        <p className="sans text-sm leading-relaxed">{report.readiness_summary}</p>
+        <p className="sans whitespace-pre-line text-sm leading-relaxed">{plainText(report.readiness_summary)}</p>
       </div>
       <div className="grid gap-4 md:grid-cols-2">
         <div className="card p-5">

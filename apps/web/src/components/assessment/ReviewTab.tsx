@@ -13,6 +13,7 @@ import type {
 import { followUpLog } from "@/lib/api";
 import { ConfidenceBadge } from "@/components/StatusBadge";
 import { EvidenceTrace } from "@/components/EvidenceTrace";
+import { plainText } from "@/lib/text";
 
 type ReviewFn = (
   claimId: string,
@@ -180,7 +181,7 @@ function DecisionRow({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-[240px] flex-1">
           <div className="font-semibold">{title}</div>
-          {detail && <div className="sans mt-1 text-sm text-[var(--muted)]">{detail}</div>}
+          {detail && <div className="sans mt-1 whitespace-pre-line text-sm text-[var(--muted)]">{detail}</div>}
           {confidence != null && (
             <div className="mt-2">
               <ConfidenceBadge value={confidence} />
@@ -404,7 +405,7 @@ export function ReviewTab({
                   {r.server_key} → {r.recommended_sku && r.recommended_sku !== "none" ? r.recommended_sku : "no SKU"}
                 </>
               }
-              detail={r.result?.explanation}
+              detail={plainText(r.result?.explanation)}
               confidence={r.confidence}
               acceptLabel="Sign off"
               busy={busy}
