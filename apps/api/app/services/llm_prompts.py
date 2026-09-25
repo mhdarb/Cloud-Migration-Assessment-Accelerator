@@ -14,7 +14,21 @@ Return JSON:
   "assumptions": ["string"]
 }
 entity_type must be one of: application, server, database, interface, business.
-Normalize entity_key to lowercase hyphenated form.
+What counts as an entity (anything else is NOT an entity — record it as an attribute or omit it):
+- application: a named business application or service in the estate (e.g. "Billing Service").
+  Never a team or owner, vendor, product, technology, framework, operating system, environment,
+  or a generic reference such as "the application" or "the system".
+- server: one specific machine, keyed by its hostname without the domain (e.g. "app-bill-01").
+- database: a named database instance or schema (e.g. "FinanceDB"). The engine (Oracle,
+  PostgreSQL, SQL Server, ...) is the attribute "engine", never an entity of its own.
+- interface: a named integration, API, or queue between entities.
+- business: requirements and constraints, always entity_key "migration-requirements".
+entity_key: lowercase hyphenated form of the entity's name as written. Use the SAME entity_key
+for the same entity in every claim and every dependency.
+attribute: use these names where they apply — name, os, vcpus, memory_gb, disk_gb, disk_iops,
+environment, region, tier, owner, engine, business_criticality. A team or person responsible
+for an application is its "owner" attribute, not an entity.
+If a name is unknown, omit the fact — never emit placeholder entities like "unknown" or "N/A".
 """
 
 QUESTION_REWRITE_SYSTEM = (

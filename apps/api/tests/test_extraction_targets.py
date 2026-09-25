@@ -25,7 +25,8 @@ def test_server_sizing_target_adapts_to_extraction_result():
     )
     result = target.to_extraction_result()
     attrs = {(c.entity_type, c.entity_key, c.attribute, c.value) for c in result.claims}
-    assert ("server", "app-bill-01", "vcpu", "8") in attrs
+    # Canonical name (normalization.MEASURED_FIELDS), not the schema field name "vcpu".
+    assert ("server", "app-bill-01", "vcpus", "8") in attrs
     assert ("server", "app-bill-01", "memory_gb", "32.0") in attrs
     assert ("server", "app-bill-01", "os", "RHEL 8") in attrs
     assert result.gaps == ["disk IOPS not stated"]
@@ -38,7 +39,7 @@ def test_server_sizing_target_skips_none_fields():
     )
     result = target.to_extraction_result()
     assert len(result.claims) == 1
-    assert result.claims[0].attribute == "vcpu"
+    assert result.claims[0].attribute == "vcpus"
 
 
 def test_nfr_target_adapts_to_business_claims():

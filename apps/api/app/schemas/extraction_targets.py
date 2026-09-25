@@ -42,8 +42,10 @@ class ServerSizingTarget(ExtractionTarget):
     def to_extraction_result(self) -> ExtractionResult:
         claims: list[ExtractedClaim] = []
         for server in self.servers:
+            # Canonical attribute names (see normalization.MEASURED_FIELDS) so sizing,
+            # conflict detection, and the eval harness all see one name per fact.
             for attribute, value in (
-                ("vcpu", server.vcpu),
+                ("vcpus", server.vcpu),
                 ("memory_gb", server.memory_gb),
                 ("os", server.os),
                 ("disk_gb", server.disk_gb),

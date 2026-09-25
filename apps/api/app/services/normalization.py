@@ -151,6 +151,110 @@ def header_unit(raw_header: str) -> str | None:
 _FQDN_RE = re.compile(r"^([a-z0-9][a-z0-9-]*)\.[a-z0-9.-]*[a-z]{2,}$", re.I)
 
 
+def slug(text: str) -> str:
+    """lowercase-hyphenated key form (same rule the deterministic extractor uses)."""
+    return re.sub(r"[^a-z0-9]+", "-", (text or "").strip().lower()).strip("-")
+
+
+# Entity types models commonly emit instead of the five canonical ones. Mapping them keeps
+# the fact (previously a "vm"- or "db"-typed claim was silently dropped by the allowlist).
+_ENTITY_TYPE_SYNONYMS: dict[str, str] = {
+    **dict.fromkeys(
+        ("application", "applications", "app", "apps", "service", "services", "microservice",
+         "system", "web-app", "webapp", "component", "workload", "business-application"),
+        "application",
+    ),
+    **dict.fromkeys(
+        ("server", "servers", "host", "hosts", "vm", "vms", "virtual-machine", "instance",
+         "node", "machine", "compute", "hostname"),
+        "server",
+    ),
+    **dict.fromkeys(
+        ("database", "databases", "db", "dbs", "datastore", "data-store", "schema"), "database"
+    ),
+    **dict.fromkeys(
+        ("interface", "interfaces", "integration", "endpoint", "api", "api-endpoint", "queue",
+         "topic", "message-queue", "feed"),
+        "interface",
+    ),
+    **dict.fromkeys(
+        ("business", "requirement", "requirements", "nfr", "non-functional-requirement",
+         "compliance", "constraint"),
+        "business",
+    ),
+}
+
+
+def canonical_entity_type(raw: str | None) -> str | None:
+    """Canonical entity type for a raw (model-emitted) type, or None if unrecognized."""
+    return _ENTITY_TYPE_SYNONYMS.get(slug(raw or ""))
+
+
+# Placeholder and generic-reference keys a model emits when it has no real name
+# ("the application", "N/A", "unknown"). Deliberately excludes short words that are also
+# plausible real service names from code manifests ("app", "api", "db", "web").
+GENERIC_ENTITY_KEYS = frozenset(
+    {
+        "unknown", "none", "null", "n-a", "na", "not-applicable", "tbd", "tba", "not-specified",
+        "not-documented", "not-available", "other", "misc", "various", "multiple",
+        "application", "applications", "the-application", "the-app", "service", "services",
+        "the-service", "system", "systems", "the-system", "server", "servers", "the-server",
+        "database", "databases", "the-database", "interface", "interfaces", "integration",
+        "integrations", "platform", "the-platform",
+    }
+)
+
+
+def canonical_entity_key(entity_type: str, raw: str | None) -> str:
+    """Canonical key for an entity name. Servers go through `normalize_host_key` (case,
+    FQDN -> short host); everything else is slugged with a leading article removed."""
+    if entity_type == "server":
+        return normalize_host_key(raw or "")
+    key = slug(raw or "")
+    if key.startswith("the-") and len(key) > 4:
+        key = key[4:]
+    return key or "unknown"
+
+
+def is_generic_entity_key(entity_type: str, key: str) -> bool:
+    """True for placeholder / generic-reference names that aren't real entities.
+    `business` entities (e.g. 'migration-requirements') are never generic."""
+    return entity_type != "business" and (not key or key in GENERIC_ENTITY_KEYS)
+
+
+_NAME_ATTRIBUTES = frozenset(
+    {
+        "name", "display_name", "hostname", "host_name", "server_name", "app_name",
+        "application_name", "database_name", "db_name", "service_name", "title",
+    }
+)
+_ATTRIBUTE_SYNONYMS = {
+    "criticality": "business_criticality",
+    "business_criticality": "business_criticality",
+    "db_engine": "engine",
+    "database_engine": "engine",
+    "engine_type": "engine",
+    "dbms": "engine",
+    "app_tier": "tier",
+    "business_owner": "owner",
+    "team": "owner",
+}
+
+
+def canonical_attribute(raw: str | None) -> str:
+    """Canonical attribute name: `vCPU`/`cores` -> `vcpus`, `RAM (GB)` -> `memory_gb`,
+    `Operating System` -> `os`, `hostname` -> `name`, otherwise snake_case."""
+    key = re.sub(r"[^a-z0-9]+", "_", (raw or "").strip().lower()).strip("_")
+    if key in _NAME_ATTRIBUTES:
+        return "name"
+    if key in _ATTRIBUTE_SYNONYMS:
+        return _ATTRIBUTE_SYNONYMS[key]
+    mapped = canonical_header(raw or "")
+    if mapped in INFRA_COLUMN_ALIASES and mapped != "server":
+        return mapped
+    return key or "unknown"
+
+
 def normalize_host_key(name: str) -> str:
     """Canonical key for a server, collapsing an FQDN to its short hostname so the same
     host described as "app-01.corp.local" in one source and "app-01" in another dedupes to

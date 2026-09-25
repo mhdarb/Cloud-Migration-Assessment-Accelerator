@@ -347,6 +347,19 @@ def sanitize_extraction_output(result: ExtractionResult) -> tuple[ExtractionResu
         report.note("config", "allow", "guardrails_disabled")
         return result, report
 
+    # Resolve entity types/keys/attributes first, so a synonym-typed fact ("vm", "db",
+    # "service") is mapped onto the allowlist rather than dropped by it.
+    from app.services.entity_resolution import normalize_extraction
+
+    result, resolution = normalize_extraction(result)
+    if resolution.generic_dropped or resolution.variants_merged or resolution.types_mapped:
+        report.note(
+            "output",
+            "sanitize",
+            "entity_resolution",
+            ",".join(f"{k}={v}" for k, v in resolution.as_dict().items() if v),
+        )
+
     claims: list[ExtractedClaim] = []
     dropped_claims = 0
     for c in result.claims:
