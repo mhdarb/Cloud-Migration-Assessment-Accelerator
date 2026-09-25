@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api, AssessmentListItem, Health, llmLabel } from "@/lib/api";
 import { StatusBadge } from "@/components/StatusBadge";
+import { RuntimeTimer } from "@/components/RuntimeTimer";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { isInFlight, isTerminal } from "@/lib/status";
@@ -195,6 +196,7 @@ export default function HomePage() {
               <tr>
                 <th className="px-4 py-3">Name</th>
                 <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">Runtime</th>
                 <th className="px-4 py-3">Stage</th>
                 <th className="px-4 py-3">Docs</th>
                 <th className="px-4 py-3">Updated</th>
@@ -204,14 +206,14 @@ export default function HomePage() {
             <tbody>
               {items.length === 0 && (
                 <tr>
-                  <td className="px-4 py-6 text-[var(--muted)]" colSpan={6}>
+                  <td className="px-4 py-6 text-[var(--muted)]" colSpan={7}>
                     No assessments yet. Upload sample-data files to begin.
                   </td>
                 </tr>
               )}
               {items.length > 0 && visibleItems.length === 0 && (
                 <tr>
-                  <td className="px-4 py-6 text-[var(--muted)]" colSpan={6}>
+                  <td className="px-4 py-6 text-[var(--muted)]" colSpan={7}>
                     No assessments match your search.
                   </td>
                 </tr>
@@ -241,6 +243,19 @@ export default function HomePage() {
                   </td>
                   <td className="px-4 py-3">
                     <StatusBadge status={item.status} />
+                  </td>
+                  <td className="px-4 py-3">
+                    {item.runtime_seconds == null ? (
+                      <span className="text-[var(--muted)]">—</span>
+                    ) : (
+                      <RuntimeTimer
+                        key={item.pipeline_started_at ?? "not-started"}
+                        compact
+                        runtimeSeconds={item.runtime_seconds}
+                        status={item.status}
+                        running={!isTerminal(item.status) && !item.pipeline_finished_at}
+                      />
+                    )}
                   </td>
                   <td className="px-4 py-3 capitalize">
                     {item.workflow_stage.replaceAll("_", " ")}

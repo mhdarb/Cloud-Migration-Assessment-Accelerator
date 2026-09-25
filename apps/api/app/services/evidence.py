@@ -22,6 +22,38 @@ def grounded_quote_for_chunk(entry: dict[str, Any], quote: str | None) -> str | 
     return quote if quote_grounded(quote, [entry.get("text", "")]) else None
 
 
+def evidence_locator(filename: str, page: int | None, metadata: dict[str, Any] | None) -> str | None:
+    """Where in the source document a chunk came from, phrased for that format.
+
+    A bare page number is only meaningful for PDFs. DOCX has no page concept (Word paginates
+    at render time, so the whole document parses as one unit), a workbook's "page" is its
+    sheet index, and CSV/JSON/code are single-unit — printing "p. 1" for those is noise. We
+    use the structural anchor the chunker recorded instead, and return None when there is
+    nothing more specific than the filename itself.
+    """
+    meta = metadata or {}
+    sheet = meta.get("sheet")
+    sheet_prefix = f'sheet "{sheet}", ' if sheet else ""
+
+    if meta.get("file_path"):
+        return str(meta["file_path"])
+    if meta.get("kind") == "table_summary":
+        return f"{sheet_prefix}computed summary"
+    row_range = meta.get("row_range")
+    if isinstance(row_range, list | tuple) and len(row_range) == 2:
+        start, end = int(row_range[0]), int(row_range[1])
+        rows = f"row {end}" if end - start == 1 else f"rows {start + 1}–{end}"
+        return f"{sheet_prefix}{rows}"
+    qa_index = meta.get("qa_index")
+    if isinstance(qa_index, int) and qa_index >= 0:
+        return f"Q{qa_index + 1}"
+    if sheet:
+        return f'sheet "{sheet}"'
+    if page and filename.lower().endswith(".pdf"):
+        return f"p. {page}"
+    return None
+
+
 def public_evidence_fields(entry: dict[str, Any]) -> dict[str, Any]:
     """Drop internal-only fields (`text`, kept in `resolve_evidence_map` entries only for
     `grounded_quote_for_chunk`'s own use) before an entry is serialized as `EvidenceOut`."""
@@ -88,6 +120,7 @@ def resolve_evidence_map(
             "filename": document.filename,
             "doc_type": document.doc_type.value,
             "page": chunk.page,
+            "locator": evidence_locator(document.filename, chunk.page, chunk.metadata_json),
             "text": chunk.text,
         }
     return evidence

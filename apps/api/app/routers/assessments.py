@@ -79,6 +79,9 @@ def list_assessments(db: Session = Depends(get_db)) -> list[AssessmentListOut]:
             created_at=a.created_at,
             updated_at=a.updated_at,
             document_count=len(a.documents),
+            pipeline_started_at=a.pipeline_started_at,
+            pipeline_finished_at=a.pipeline_finished_at,
+            runtime_seconds=a.runtime_seconds,
         )
         for a in rows
     ]

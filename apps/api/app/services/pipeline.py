@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 
 from sqlalchemy.orm import Session
 
@@ -66,6 +67,7 @@ class AssessmentPipeline:
             if assessment:
                 assessment.status = PipelineStatus.failed
                 assessment.error_message = str(exc)
+                assessment.pipeline_finished_at = datetime.utcnow()  # freeze the timer
                 db.commit()
         finally:
             db.close()
@@ -76,6 +78,9 @@ class AssessmentPipeline:
         assessment.status = PipelineStatus.ingesting
         assessment.workflow_stage = WorkflowStage.research
         assessment.error_message = None
+        # Start the runtime clock for this run (a re-run resets it).
+        assessment.pipeline_started_at = datetime.utcnow()
+        assessment.pipeline_finished_at = None
         db.commit()
 
         clear_derived(
@@ -148,6 +153,8 @@ class AssessmentPipeline:
                 "recommendation_count": len(recommendations),
             }
         )
+        assessment.pipeline_finished_at = datetime.utcnow()
+        metrics["pipeline_runtime_seconds"] = round(assessment.runtime_seconds or 0.0, 1)
         assessment.metrics = metrics
         assessment.status = PipelineStatus.completed
         db.commit()

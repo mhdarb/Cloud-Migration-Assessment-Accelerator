@@ -55,6 +55,9 @@ def assessment_out(assessment: Assessment) -> AssessmentOut:
         metrics=assessment.metrics,
         created_at=assessment.created_at,
         updated_at=assessment.updated_at,
+        pipeline_started_at=assessment.pipeline_started_at,
+        pipeline_finished_at=assessment.pipeline_finished_at,
+        runtime_seconds=assessment.runtime_seconds,
         documents=[
             DocumentOut(
                 id=d.id,

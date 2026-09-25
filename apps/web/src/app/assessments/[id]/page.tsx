@@ -5,8 +5,9 @@ import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useAssessment } from "@/hooks/useAssessment";
 import { parseTab, TABS, type Tab } from "@/lib/tabs";
-import { isInFlight } from "@/lib/status";
+import { isInFlight, isTerminal } from "@/lib/status";
 import { StatusBadge } from "@/components/StatusBadge";
+import { RuntimeTimer } from "@/components/RuntimeTimer";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { OverviewTab } from "@/components/assessment/OverviewTab";
@@ -106,6 +107,12 @@ function AssessmentDetail() {
           ) : null}
           <div className="mt-2 flex flex-wrap items-center gap-3">
             <StatusBadge status={assessment.status} />
+            <RuntimeTimer
+              key={assessment.pipeline_started_at ?? "not-started"}
+              runtimeSeconds={assessment.runtime_seconds}
+              status={assessment.status}
+              running={!isTerminal(assessment.status) && !assessment.pipeline_finished_at}
+            />
             <span className="sans text-sm text-[var(--muted)]">
               Workflow: {assessment.workflow_stage.replaceAll("_", " ")}
             </span>

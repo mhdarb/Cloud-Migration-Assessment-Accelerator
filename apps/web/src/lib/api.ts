@@ -39,6 +39,15 @@ export type AssessmentListItem = {
   created_at: string;
   updated_at: string;
   document_count: number;
+} & PipelineTiming;
+
+/** Runtime of the latest pipeline run. `runtime_seconds` is computed by the server (live
+ * while running, final once finished) — the UI timer anchors on it rather than doing
+ * client-clock math against a server timestamp. */
+export type PipelineTiming = {
+  pipeline_started_at?: string | null;
+  pipeline_finished_at?: string | null;
+  runtime_seconds?: number | null;
 };
 
 export type DocumentOut = {
@@ -61,7 +70,7 @@ export type Assessment = {
   created_at: string;
   updated_at: string;
   documents: DocumentOut[];
-};
+} & PipelineTiming;
 
 export type Claim = {
   id: string;
@@ -88,6 +97,8 @@ export type Evidence = {
   filename: string;
   doc_type: string;
   page: number | null;
+  /** Format-aware position, e.g. "rows 21–40", 'sheet "Servers"', "Q3", "p. 4" (PDF only). */
+  locator?: string | null;
   quote: string | null;
 };
 

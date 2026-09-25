@@ -755,5 +755,11 @@ class DocumentChunker:
             pieces = chunk_prose_with_tables(
                 pages, settings.chunk_size_tokens, settings.chunk_overlap_tokens, settings.chunk_inventory_rows
             )
+        # Where a "page" is really a named unit (a workbook sheet), record its name so a
+        # citation can say `sheet "Servers"` instead of a meaningless `p. 2`.
+        labels = {p.page: p.label for p in pages if p.label}
+        for piece in pieces:
+            if piece.page in labels:
+                piece.metadata["sheet"] = labels[piece.page]
         _annotate_with_context(pieces, doc_type)
         return pieces

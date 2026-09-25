@@ -95,6 +95,21 @@ class Assessment(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
+    # Wall-clock bounds of the most recent pipeline run (naive UTC, like the other
+    # timestamps). Nullable so existing DBs pick them up via `_add_missing_columns`.
+    pipeline_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    pipeline_finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    @property
+    def runtime_seconds(self) -> float | None:
+        """Duration of the latest pipeline run: final once it has finished, live (so far)
+        while it is still running, None if it has never run. Computed on the server so the
+        UI never has to subtract its own clock from a server timestamp (clock skew, and
+        naive-UTC strings that browsers parse as local time)."""
+        if self.pipeline_started_at is None:
+            return None
+        end = self.pipeline_finished_at or datetime.utcnow()
+        return max(0.0, (end - self.pipeline_started_at).total_seconds())
 
     documents: Mapped[list[Document]] = relationship(back_populates="assessment")
     chunks: Mapped[list[Chunk]] = relationship(back_populates="assessment")

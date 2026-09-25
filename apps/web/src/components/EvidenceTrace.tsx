@@ -22,7 +22,7 @@ export function EvidenceTrace({
         <div key={item.chunk_id} className="text-xs">
           <div className="font-medium text-[var(--foreground)]">
             {item.filename}
-            {item.page ? ` · p. ${item.page}` : ""}
+            {item.locator ? ` · ${item.locator}` : ""}
           </div>
           {(item.quote || fallbackQuote) && (
             <blockquote className="mt-1 border-l-2 border-[var(--border)] pl-2 text-[var(--muted)]">

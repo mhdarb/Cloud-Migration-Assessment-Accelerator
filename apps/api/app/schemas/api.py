@@ -1,9 +1,31 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    """The DB stores naive UTC; tag it so it serializes as "...+00:00". A bare ISO string
+    without an offset is parsed by browsers as *local* time, skewing any client math."""
+    if value is not None and value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value
+
+
+class _PipelineTiming(BaseModel):
+    """Runtime of the latest pipeline run. `runtime_seconds` is computed server-side (live
+    while running, final once finished) and is what the UI timer is anchored on."""
+
+    pipeline_started_at: datetime | None = None
+    pipeline_finished_at: datetime | None = None
+    runtime_seconds: float | None = None
+
+    @field_validator("pipeline_started_at", "pipeline_finished_at", mode="after")
+    @classmethod
+    def _utc(cls, value: datetime | None) -> datetime | None:
+        return _as_utc(value)
 
 
 class AssessmentCreate(BaseModel):
@@ -26,7 +48,7 @@ class DocumentOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class AssessmentOut(BaseModel):
+class AssessmentOut(_PipelineTiming):
     id: str
     name: str
     status: str
@@ -40,7 +62,7 @@ class AssessmentOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class AssessmentListOut(BaseModel):
+class AssessmentListOut(_PipelineTiming):
     id: str
     name: str
     status: str
@@ -58,6 +80,9 @@ class EvidenceOut(BaseModel):
     filename: str
     doc_type: str
     page: int | None = None
+    # Format-aware position ("rows 21–40", 'sheet "Servers"', "Q3", "p. 4" for PDFs only).
+    # Preferred over `page` for display; `page` is kept for backward compatibility.
+    locator: str | None = None
     quote: str | None = None
 
 

@@ -44,6 +44,9 @@ _COLUMN_GUTTER_MIN_SIDE = 0.3  # each column must hold at least this fraction of
 class ParsedPage:
     page: int
     text: str
+    # Human-readable name for this unit when "page" isn't a real page — e.g. the sheet name
+    # for a workbook, where `page` is just the sheet's index. Used to build citation locators.
+    label: str | None = None
 
 
 @dataclass
@@ -641,7 +644,13 @@ def _parse_xlsx_streaming(path: str, settings) -> ParseResult:
             if len(raw_rows) >= settings.max_rows_per_sheet:
                 truncated = True
                 break
-        pages.append(ParsedPage(page=idx, text=_sheet_text(sheet_name, raw_rows, truncated, settings)))
+        pages.append(
+            ParsedPage(
+                page=idx,
+                text=_sheet_text(sheet_name, raw_rows, truncated, settings),
+                label=sheet_name,
+            )
+        )
     wb.close()
     return ParseResult(pages=pages, page_count=len(pages))
 
@@ -674,7 +683,13 @@ def _parse_xlsx_full(path: str, settings) -> ParseResult:
             if len(raw_rows) >= settings.max_rows_per_sheet:
                 truncated = True
                 break
-        pages.append(ParsedPage(page=idx, text=_sheet_text(sheet_name, raw_rows, truncated, settings)))
+        pages.append(
+            ParsedPage(
+                page=idx,
+                text=_sheet_text(sheet_name, raw_rows, truncated, settings),
+                label=sheet_name,
+            )
+        )
     wb.close()
     return ParseResult(pages=pages, page_count=len(pages))
 
