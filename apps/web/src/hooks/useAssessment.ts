@@ -19,6 +19,11 @@ import { isTerminal } from "@/lib/status";
 
 const REVIEWER_KEY = "cmaa.reviewer";
 
+/** Sections whose empty state must not be confused with "still loading". */
+export type DetailSection = "answers" | "recommendations";
+/** No entry = the first load is still in flight. */
+export type LoadState = Partial<Record<DetailSection, "loaded" | "failed">>;
+
 export function useAssessment(id: string) {
   const [assessment, setAssessment] = useState<Assessment | null>(null);
   const [claims, setClaims] = useState<Claim[]>([]);
@@ -33,6 +38,7 @@ export function useAssessment(id: string) {
   const [reviewEdges, setReviewEdges] = useState<DependencyEdge[]>([]);
   const [reviewStatus, setReviewStatus] = useState<ReviewStatus | null>(null);
   const [reviewer, setReviewerState] = useState("");
+  const [loadState, setLoadState] = useState<LoadState>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -63,40 +69,42 @@ export function useAssessment(id: string) {
   }, [id]);
 
   const loadDetails = useCallback(async (status: string) => {
-    const settled = await Promise.allSettled([
-      api.claims(id),
-      api.entities(id),
-      api.graph(id),
-      api.conflicts(id),
-      api.assessmentQuestions(id),
-      api.recommendations(id),
-      api.edges(id, true),
-      api.reviewStatus(id),
-    ]);
     const failed: string[] = [];
-    const assign = <T,>(
-      result: PromiseSettledResult<T>,
+    // Each result is applied the moment it arrives. Waiting for all of them (as a single
+    // Promise.allSettled did) held every tab hostage to the slowest request — question
+    // answers can take many seconds with retrieval + an LLM — so on a refresh the Sizing
+    // tab sat empty and the standard questions looked gone until everything returned.
+    const track = <T,>(
+      request: Promise<T>,
+      section: DetailSection | null,
       label: string,
       setter: (value: T) => void
-    ) => {
-      if (result.status === "fulfilled") setter(result.value);
-      else failed.push(label);
-    };
-    assign(settled[0], "claims", setClaims);
-    assign(settled[1], "entities", setEntities);
-    assign(settled[2], "graph", setGraph);
-    assign(settled[3], "conflicts", setConflicts);
-    assign(settled[4], "questions", setAnswers);
-    assign(settled[5], "recommendations", setRecommendations);
-    assign(settled[6], "dependency edges", setReviewEdges);
-    assign(settled[7], "review status", setReviewStatus);
-
-    try {
-      setReport(await api.report(id));
-    } catch {
-      setReport(null);
-      if (isTerminal(status)) failed.push("report");
-    }
+    ) =>
+      request.then(
+        (value) => {
+          setter(value);
+          if (section) setLoadState((prev) => ({ ...prev, [section]: "loaded" }));
+        },
+        () => {
+          failed.push(label);
+          // Keep data from an earlier successful load; only report failure if there's none.
+          if (section) setLoadState((prev) => (prev[section] === "loaded" ? prev : { ...prev, [section]: "failed" }));
+        }
+      );
+    await Promise.all([
+      track(api.claims(id), null, "claims", setClaims),
+      track(api.entities(id), null, "entities", setEntities),
+      track(api.graph(id), null, "graph", setGraph),
+      track(api.conflicts(id), null, "conflicts", setConflicts),
+      track(api.assessmentQuestions(id), "answers", "questions", setAnswers),
+      track(api.recommendations(id), "recommendations", "recommendations", setRecommendations),
+      track(api.edges(id, true), null, "dependency edges", setReviewEdges),
+      track(api.reviewStatus(id), null, "review status", setReviewStatus),
+      api.report(id).then(setReport, () => {
+        setReport(null);
+        if (isTerminal(status)) failed.push("report");
+      }),
+    ]);
 
     if (failed.length && isTerminal(status)) {
       setError(`Could not load ${failed.join(", ")}`);
@@ -266,6 +274,7 @@ export function useAssessment(id: string) {
     recommendations,
     reviewEdges,
     reviewStatus,
+    loadState,
     reviewer,
     setReviewer,
     error,

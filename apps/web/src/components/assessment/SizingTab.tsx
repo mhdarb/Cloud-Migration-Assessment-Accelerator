@@ -9,8 +9,11 @@ function skuName(item: Record<string, unknown>): string {
 
 export function SizingTab({
   recommendations,
+  loadState,
 }: {
   recommendations: InfrastructureRecommendation[];
+  /** undefined while the first load is in flight. */
+  loadState?: "loaded" | "failed";
 }) {
   const priced = recommendations.filter(
     (r) => r.result.sku_decision !== "blocked" && r.result.pricing
@@ -171,7 +174,11 @@ export function SizingTab({
       })}
       {recommendations.length === 0 && (
         <div className="card p-5 sans text-sm text-[var(--muted)]">
-          Recommendations appear after the pipeline identifies server inventory.
+          {loadState === "failed"
+            ? "Sizing couldn’t be loaded. Refresh the page to try again."
+            : !loadState
+              ? "Loading sizing…"
+              : "Recommendations appear after the pipeline identifies server inventory."}
         </div>
       )}
     </div>

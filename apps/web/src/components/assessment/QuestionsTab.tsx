@@ -9,6 +9,7 @@ export function QuestionsTab({
   assessmentId,
   status,
   answers,
+  answersState,
   busy,
   onAsk,
   onError,
@@ -16,6 +17,8 @@ export function QuestionsTab({
   assessmentId: string;
   status: string;
   answers: AssessmentAnswers | null;
+  /** undefined while the first load is in flight. */
+  answersState?: "loaded" | "failed";
   busy?: boolean;
   onAsk?: (question: string) => Promise<boolean>;
   onError: (message: string | null) => void;
@@ -43,7 +46,11 @@ export function QuestionsTab({
           ))}
           {!standard.length && (
             <div className="card p-5 sans text-sm text-[var(--muted)]">
-              Assessment questions appear after extraction completes.
+              {answersState === "failed"
+                ? "Answers couldn’t be loaded. Refresh the page to try again."
+                : !answersState
+                  ? "Loading answers…"
+                  : "Assessment questions appear after extraction completes."}
             </div>
           )}
         </div>

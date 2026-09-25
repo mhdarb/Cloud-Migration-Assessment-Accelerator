@@ -35,6 +35,7 @@ function AssessmentDetail() {
     recommendations,
     reviewEdges,
     reviewStatus,
+    loadState,
     reviewer,
     setReviewer,
     error,
@@ -208,12 +209,15 @@ function AssessmentDetail() {
           assessmentId={id}
           status={assessment.status}
           answers={answers}
+          answersState={loadState.answers}
           busy={busy}
           onAsk={onAskQuestion}
           onError={setError}
         />
       )}
-      {tab === "sizing" && <SizingTab recommendations={recommendations} />}
+      {tab === "sizing" && (
+        <SizingTab recommendations={recommendations} loadState={loadState.recommendations} />
+      )}
       {tab === "findings" && (
         <FindingsTab entities={entities} claims={claims} conflicts={conflicts} />
       )}
