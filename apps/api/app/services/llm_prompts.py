@@ -25,6 +25,11 @@ What counts as an entity (anything else is NOT an entity — record it as an att
 - business: requirements and constraints, always entity_key "migration-requirements".
 entity_key: lowercase hyphenated form of the entity's name as written. Use the SAME entity_key
 for the same entity in every claim and every dependency.
+Deduplication: a generic label ("Container App", "Python App", "Node app", "the API", "web app",
+"backend service", a docker-compose service name like "api") is NOT a separate entity when the
+chunks name a concrete service it refers to (same folder, image, port, runtime, or description).
+Use the concrete service's entity_key for every fact about it, and never list both.
+Only when no concrete name exists anywhere in the chunks may the generic label stand as the key.
 attribute: use these names where they apply — name, os, vcpus, memory_gb, disk_gb, disk_iops,
 environment, region, tier, owner, engine, business_criticality. A team or person responsible
 for an application is its "owner" attribute, not an entity.

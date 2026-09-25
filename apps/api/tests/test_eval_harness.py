@@ -124,12 +124,14 @@ _DEFAULT_FLOORS = {
     "sizing_coverage": 0.70,
 }
 # Per-estate overrides where a metric is legitimately lower than the strict default:
-#  - contoso: its code snapshot (sample-app.zip) legitimately yields extra apps/dbs (a
-#    docker-compose "api" service, postgres/redis deps) not in the doc-derived labels, so
-#    entity precision is lower — recall stays 1.0.
+#  - contoso: its code snapshot (sample-app.zip) legitimately yields entities the
+#    doc-derived labels don't list — the `contoso-billing-api` package and postgres/redis
+#    deps — so precision sits below 1.0 (recall stays 1.0). Placeholder names from the
+#    manifest parsers ("Container App", compose "api", "snapshot-app") are now folded into
+#    the concrete service; the application floor is set to catch them if they return.
 #  - orion: 3 of 8 hosts are intentionally unsizable (AIX + Solaris unsupported, plus a
 #    16-vCPU DB host exceeding the local catalog), so sizing_coverage floors at 0.625.
 _ESTATE_FLOORS = {
-    "contoso": {"application_precision": 0.40, "database_precision": 0.50},
+    "contoso": {"application_precision": 0.75, "database_precision": 0.50},
     "orion": {"sizing_coverage": 0.60},
 }

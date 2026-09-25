@@ -76,14 +76,32 @@ def parse_dockerfile(text: str, path: str) -> ExtractionResult:
                     deps.append(item)
     return ExtractionResult(claims=claims, dependencies=deps)
 
+BUILD_CONTEXT_ATTRIBUTE = "build_context"  # consumed by code_manifests, never persisted
+
+
+def _service_build_context(block: str) -> str | None:
+    """`build: ./dir`, or `build:` followed by an indented `context: ./dir`."""
+    # `[ \t]` rather than `\s`: the value must be on the same line as `build:` — `\s` would
+    # run across the newline and read the next line's `context:` key as the build path.
+    m = re.search(r"^[ \t]+build:[ \t]*['\"]?([^\s'\"#]+)", block, re.M)
+    if m:
+        return m.group(1)
+    if re.search(r"^[ \t]+build:[ \t]*$", block, re.M):
+        ctx = re.search(r"^[ \t]+context:[ \t]*['\"]?([^\s'\"#]+)", block, re.M)
+        return ctx.group(1) if ctx else "."
+    return None
+
+
 def parse_compose(text: str, path: str) -> ExtractionResult:
     claims: list[ExtractedClaim] = []
     deps: list[ExtractedDependency] = []
-    # naive service blocks
-    for m in re.finditer(r"^\s{2}([a-zA-Z0-9_-]+):\s*$", text, re.M):
+    # naive service blocks: a two-space-indented `name:` header up to the next header
+    headers = list(re.finditer(r"^\s{2}([a-zA-Z0-9_-]+):\s*$", text, re.M))
+    for i, m in enumerate(headers):
         svc = m.group(1)
         if svc in {"services", "volumes", "networks", "version"}:
             continue
+        block = text[m.end() : headers[i + 1].start() if i + 1 < len(headers) else len(text)]
         etype, ekey = "application", norm_app(svc)
         if any(k in svc.lower() for k in ("postgres", "db", "mysql", "mongo")):
             etype, ekey = "database", norm_app(svc)
@@ -102,6 +120,22 @@ def parse_compose(text: str, path: str) -> ExtractionResult:
                 chunk_ids=[],
             )
         )
+        build_context = _service_build_context(block) if etype == "application" else None
+        if build_context:
+            # A service built from source *is* the component in that build directory
+            # (e.g. `api` with `build: .` next to package.json "zephyr-order-api");
+            # code_manifests uses this to fold the service name into the concrete one.
+            claims.append(
+                ExtractedClaim(
+                    entity_type=etype,
+                    entity_key=ekey,
+                    attribute=BUILD_CONTEXT_ATTRIBUTE,
+                    value=build_context,
+                    confidence=0.8,
+                    evidence_quote=quote(path, f"service: {svc} build: {build_context}"),
+                    chunk_ids=[],
+                )
+            )
     image_hits = re.findall(r"image:\s*['\"]?([^\s'\"]+)", text, re.I)
     for img in image_hits:
         for key in INFRA_DEPS:
