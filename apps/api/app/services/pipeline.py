@@ -12,7 +12,7 @@ from app.services.assessment_questions import plan_dynamic_questions
 from app.services.extraction_merge import merge_extractions
 from app.services.ingest import clear_derived, ingest_documents
 from app.services.llm_reasoning import get_grounded_prose
-from app.services.pipeline_lock import release, try_acquire
+from app.services.pipeline_lock import Heartbeat, release, try_acquire
 from app.services.ports import ClaimExtractor, Embedder, Retriever, VectorIndex
 from app.services.questionnaire_extract import sync_uploaded_questions
 from app.services.reconciliation import (
@@ -67,7 +67,8 @@ class AssessmentPipeline:
             return
         db = self._services.session_factory()
         try:
-            self._execute(db, assessment_id)
+            with Heartbeat(assessment_id, self._services.session_factory):
+                self._execute(db, assessment_id)
         except Exception as exc:
             logger.exception("Pipeline failed for %s", assessment_id)
             db.rollback()
@@ -90,6 +91,7 @@ class AssessmentPipeline:
         assessment.error_message = None
         # Start the runtime clock for this run (a re-run resets it).
         assessment.pipeline_started_at = datetime.utcnow()
+        assessment.pipeline_heartbeat_at = assessment.pipeline_started_at
         assessment.pipeline_finished_at = None
         # A new run produces new findings, so any earlier "review completed" sign-off no
         # longer applies; the reviewer re-confirms after decisions are re-applied below.

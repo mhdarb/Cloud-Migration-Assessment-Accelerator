@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import UploadFile
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.entities import (
@@ -24,13 +23,13 @@ from app.models.entities import (
     Questionnaire,
     QuestionnaireItem,
     QuestionOrigin,
-    ReviewDecision,
 )
 from app.services.assessment_questions import (
     _attach_evidence,
     _questionnaire_document_ids,
     _selected_claims,
     answer_custom_question,
+    state_fingerprint,
 )
 from app.services.llm_reasoning import GroundedProse, get_grounded_prose
 from app.services.pipeline_lock import is_in_flight
@@ -151,17 +150,6 @@ def _ensure_answerable(assessment: Assessment) -> None:
         raise ValueError("Run the assessment successfully before answering a questionnaire")
 
 
-def _fingerprint(db: Session, assessment: Assessment) -> str:
-    """Changes whenever the answers could: a new pipeline run, or any review decision."""
-    count, latest = (
-        db.query(func.count(ReviewDecision.id), func.max(ReviewDecision.updated_at))
-        .filter(ReviewDecision.assessment_id == assessment.id)
-        .one()
-    )
-    finished = assessment.pipeline_finished_at.isoformat() if assessment.pipeline_finished_at else "-"
-    return f"{finished}|{count}|{latest.isoformat() if latest else '-'}"
-
-
 def questionnaire_answers(
     db: Session,
     assessment: Assessment,
@@ -171,7 +159,7 @@ def questionnaire_answers(
     prose: GroundedProse | None = None,
 ) -> list[dict[str, Any]]:
     _ensure_answerable(assessment)
-    fingerprint = _fingerprint(db, assessment)
+    fingerprint = state_fingerprint(db, assessment)
     if questionnaire.answers_cache is not None and questionnaire.answers_fingerprint == fingerprint:
         return questionnaire.answers_cache
 

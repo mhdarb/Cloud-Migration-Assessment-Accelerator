@@ -115,6 +115,8 @@ module apps 'modules/containerApps.bicep' = {
     azureOpenAiEmbeddingDeployment: azureOpenAiEmbeddingDeployment
     azureSearchEndpoint: azureSearchEndpoint
     azureSearchIndex: azureSearchIndex
+    storageAccountName: storage.outputs.name
+    uploadsShareName: storage.outputs.uploadsShareName
   }
 }
 

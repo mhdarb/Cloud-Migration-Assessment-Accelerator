@@ -43,11 +43,11 @@ from app.schemas.api import (
 )
 from app.services import assessment_service as assessments
 from app.services import questionnaires
-from app.services.assessment_questions import build_assessment_answers
+from app.services.assessment_questions import cached_assessment_answers
 from app.services.evidence import build_evidence_list, resolve_evidence, resolve_evidence_map
 from app.services.graph import build_graph, get_blast_radius
 from app.services.pipeline import run_pipeline
-from app.services.pipeline_lock import is_in_flight
+from app.services.pipeline_lock import is_in_flight, recover_if_interrupted
 from app.services.providers import get_retriever
 from app.services.report import report_to_schema
 from app.services.review import review_queue_status
@@ -90,6 +90,8 @@ def list_assessments(db: Session = Depends(get_db)) -> list[AssessmentListOut]:
     from app.models.entities import Assessment
 
     rows = db.query(Assessment).order_by(Assessment.created_at.desc()).all()
+    for row in rows:
+        recover_if_interrupted(db, row)
     return [
         AssessmentListOut(
             id=a.id,
@@ -411,11 +413,9 @@ def list_conflicts(assessment_id: str, db: Session = Depends(get_db)) -> list[Co
 def get_assessment_questions(
     assessment_id: str, db: Session = Depends(get_db)
 ) -> AssessmentAnswersOut:
-    _assessment(db, assessment_id)
+    assessment = _assessment(db, assessment_id)
     return AssessmentAnswersOut.model_validate(
-        build_assessment_answers(
-            db, assessment_id, retriever=_questions_retriever()
-        )
+        cached_assessment_answers(db, assessment, retriever=_questions_retriever())
     )
 
 

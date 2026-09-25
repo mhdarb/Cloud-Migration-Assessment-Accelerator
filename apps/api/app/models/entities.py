@@ -107,6 +107,14 @@ class Assessment(Base):
     # timestamps). Nullable so existing DBs pick them up via `_add_missing_columns`.
     pipeline_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     pipeline_finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Written every few seconds by a live run. A run lives inside an API process, so if
+    # that process dies (restart, redeploy, OOM) the status would otherwise stay "in
+    # flight" forever; a stale heartbeat is how other requests know the run is gone.
+    pipeline_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Question answers for the Questions tab, with a fingerprint of the state they were
+    # computed from — so page loads and polling don't re-run retrieval + LLM rewriting.
+    answers_cache: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    answers_fingerprint: Mapped[str | None] = mapped_column(String(160), nullable=True)
 
     @property
     def runtime_seconds(self) -> float | None:

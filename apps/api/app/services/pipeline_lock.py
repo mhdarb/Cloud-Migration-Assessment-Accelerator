@@ -130,6 +130,96 @@ def is_in_flight(assessment: Assessment) -> bool:
     return assessment.status in IN_FLIGHT
 
 
+# --------------------------------------------------------------------------- #
+# Liveness: a run lives inside one API process (FastAPI BackgroundTasks). If that
+# process dies — restart, redeploy, scale-in, OOM — nothing is left to set the status to
+# `failed`, and every action that refuses to race a run (re-run, delete, review) would
+# refuse forever. A live run writes a heartbeat; a stale one means the run is gone.
+# --------------------------------------------------------------------------- #
+class Heartbeat:
+    """Background thread stamping `pipeline_heartbeat_at` while a run is alive."""
+
+    def __init__(self, assessment_id: str, session_factory: Callable[[], Session]) -> None:
+        self._assessment_id = assessment_id
+        self._session_factory = session_factory
+        self._stop = threading.Event()
+        self._thread = threading.Thread(
+            target=self._loop, name=f"heartbeat-{assessment_id[:8]}", daemon=True
+        )
+
+    def __enter__(self) -> Heartbeat:
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self._stop.set()
+        self._thread.join(timeout=5)
+
+    def _loop(self) -> None:
+        interval = max(1.0, get_settings().pipeline_heartbeat_seconds)
+        while not self._stop.wait(interval):
+            beat(self._assessment_id, self._session_factory)
+
+
+def beat(assessment_id: str, session_factory: Callable[[], Session]) -> None:
+    db = session_factory()
+    try:
+        # Only while the run is still in flight: a heartbeat must never revive a run
+        # that has finished, failed, or been declared interrupted.
+        db.query(Assessment).filter(
+            Assessment.id == assessment_id, Assessment.status.in_(IN_FLIGHT)
+        ).update({Assessment.pipeline_heartbeat_at: datetime.utcnow()}, synchronize_session=False)
+        db.commit()
+    except Exception:  # a missed beat is harmless; the next one retries
+        db.rollback()
+        logger.debug("heartbeat failed for %s", assessment_id, exc_info=True)
+    finally:
+        db.close()
+
+
+def _last_sign_of_life(assessment: Assessment) -> datetime | None:
+    return assessment.pipeline_heartbeat_at or assessment.pipeline_started_at or assessment.updated_at
+
+
+def recover_if_interrupted(db: Session, assessment: Assessment, *, assume_dead: bool = False) -> bool:
+    """Mark an in-flight run whose process is gone as failed, and free its lock, so the
+    assessment can be re-run, reviewed or deleted again. Returns True if it recovered one.
+
+    `assume_dead` skips the staleness check: used at startup with the in-process lock,
+    where a restarted process can't possibly still be running anything."""
+    if not is_in_flight(assessment):
+        return False
+    last = _last_sign_of_life(assessment)
+    if not assume_dead:
+        stale_after = get_settings().pipeline_run_stale_seconds
+        if stale_after <= 0 or last is None:
+            return False
+        if (datetime.utcnow() - last).total_seconds() < stale_after:
+            return False
+
+    from app.services.workflow import append_follow_up
+
+    stage = assessment.status.value
+    logger.warning("Pipeline run for %s was interrupted during %s; marking failed", assessment.id, stage)
+    assessment.status = PipelineStatus.failed
+    assessment.error_message = (
+        f"The run was interrupted during {stage.replace('_', ' ')} — the server restarted or the "
+        "worker stopped. Re-run the pipeline to continue; review decisions are kept."
+    )
+    # Freeze the timer at the last moment the run was known to be alive.
+    assessment.pipeline_finished_at = last or datetime.utcnow()
+    append_follow_up(assessment, event="run_interrupted", detail={"note": f"Interrupted during {stage}"})
+    db.commit()
+    release(assessment.id)
+    return True
+
+
+def recover_interrupted_runs(db: Session, *, assume_dead: bool = False) -> int:
+    """Sweep every in-flight assessment (startup)."""
+    rows = db.query(Assessment).filter(Assessment.status.in_(IN_FLIGHT)).all()
+    return sum(recover_if_interrupted(db, a, assume_dead=assume_dead) for a in rows)
+
+
 def try_acquire(assessment_id: str) -> bool:
     return _get_lock().try_acquire(assessment_id)
 

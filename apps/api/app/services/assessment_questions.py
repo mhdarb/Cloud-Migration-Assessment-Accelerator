@@ -1,19 +1,24 @@
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Callable
 from typing import Any
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.models.entities import (
+    Assessment,
     Claim,
     DependencyEdge,
     Document,
     DocumentType,
     EngagementQuestion,
+    PipelineStatus,
     QuestionOrigin,
+    ReviewDecision,
 )
 from app.services.evidence import (
     grounded_quote_for_chunk,
@@ -21,6 +26,7 @@ from app.services.evidence import (
     resolve_evidence_map,
 )
 from app.services.inventory import not_rejected_edge
+from app.services.llm_clients import DisabledChatCompleter
 from app.services.llm_reasoning import GroundedProse, get_grounded_prose
 from app.services.ports import Retriever
 from app.services.questionnaire_extract import normalize_question_key
@@ -382,6 +388,48 @@ def build_assessment_answers(
         "complete": all(a["supported"] for a in answers),
         "review_required": any(a["needs_human_review"] for a in answers),
     }
+
+
+def state_fingerprint(db: Session, assessment: Assessment, *, include_questions: bool = False) -> str:
+    """Changes whenever an answer could: a new pipeline run, any review decision, and
+    (optionally) a new engagement question. Answers are a pure function of this state."""
+    count, latest = (
+        db.query(func.count(ReviewDecision.id), func.max(ReviewDecision.updated_at))
+        .filter(ReviewDecision.assessment_id == assessment.id)
+        .one()
+    )
+    finished = assessment.pipeline_finished_at.isoformat() if assessment.pipeline_finished_at else "-"
+    parts = [finished, str(count), latest.isoformat() if latest else "-"]
+    if include_questions:
+        q_count, q_latest = (
+            db.query(func.count(EngagementQuestion.id), func.max(EngagementQuestion.created_at))
+            .filter(EngagementQuestion.assessment_id == assessment.id)
+            .one()
+        )
+        parts += [str(q_count), q_latest.isoformat() if q_latest else "-"]
+    return "|".join(parts)
+
+
+def cached_assessment_answers(
+    db: Session, assessment: Assessment, *, retriever: Retriever | None = None
+) -> dict[str, Any]:
+    """Answers for the Questions tab. The page re-requests them on every poll and page
+    load; recomputing each time repeated the retrieval and the LLM prose rewrite for
+    identical output. A completed run's answers are computed once per state fingerprint;
+    while a run is in flight (or before one has completed) they are template-only — the
+    claims are being rebuilt, so neither retrieval nor the LLM is worth paying for."""
+    if assessment.status != PipelineStatus.completed:
+        return build_assessment_answers(
+            db, assessment.id, prose=GroundedProse(DisabledChatCompleter()), retriever=None
+        )
+    fingerprint = state_fingerprint(db, assessment, include_questions=True)
+    if assessment.answers_cache is not None and assessment.answers_fingerprint == fingerprint:
+        return assessment.answers_cache
+    result = json.loads(json.dumps(build_assessment_answers(db, assessment.id, retriever=retriever), default=str))
+    assessment.answers_cache = result
+    assessment.answers_fingerprint = fingerprint
+    db.commit()
+    return result
 
 
 def persist_ad_hoc_question(db: Session, assessment_id: str, question: str) -> EngagementQuestion:

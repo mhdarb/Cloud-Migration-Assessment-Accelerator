@@ -153,6 +153,10 @@ class Settings(BaseSettings):
     # Pipeline locking (P3)
     pipeline_lock_backend: str = "memory"  # "memory" | "db"
     pipeline_lock_stale_seconds: float = 1800.0  # 0 disables stealing
+    # A live run writes a heartbeat this often; a run whose heartbeat is older than
+    # PIPELINE_RUN_STALE_SECONDS is treated as dead (its process was restarted/killed).
+    pipeline_heartbeat_seconds: float = 30.0
+    pipeline_run_stale_seconds: float = 300.0
 
     # Dynamic architecture (extraction strategy, RAG planning, doc classification, questions)
     extraction_strategy: str = "llm"  # "llm" | "heuristic" | "ensemble"

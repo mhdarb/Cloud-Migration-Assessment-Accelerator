@@ -22,10 +22,11 @@ from app.models.entities import (
     WorkflowStage,
 )
 from app.schemas.api import AssessmentOut, DocumentOut, EntityOut
-from app.services.assessment_questions import build_assessment_answers, persist_ad_hoc_question
+from app.services.assessment_questions import cached_assessment_answers, persist_ad_hoc_question
 from app.services.inventory import load_inventory
 from app.services.llm_clients import DisabledChatCompleter
 from app.services.llm_reasoning import GroundedProse
+from app.services.pipeline_lock import recover_if_interrupted
 from app.services.ports import Retriever
 from app.services.questionnaires import delete_assessment_questionnaires
 from app.services.reconciliation import rematerialize_entities
@@ -65,6 +66,9 @@ def get_assessment(db: Session, assessment_id: str) -> Assessment:
     assessment = db.query(Assessment).filter(Assessment.id == assessment_id).one_or_none()
     if not assessment:
         raise AssessmentNotFound(assessment_id)
+    # Every per-assessment request passes through here, so a run whose process died is
+    # noticed on the next page poll instead of blocking re-run/review/delete forever.
+    recover_if_interrupted(db, assessment)
     return assessment
 
 
@@ -411,7 +415,7 @@ def ask_engagement_question(
 ) -> dict:
     persist_ad_hoc_question(db, assessment.id, question)
     generate_report(db, assessment.id, retriever=retriever)
-    return build_assessment_answers(db, assessment.id, retriever=retriever)
+    return cached_assessment_answers(db, assessment, retriever=retriever)
 
 
 def finish_review(

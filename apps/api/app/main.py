@@ -42,6 +42,25 @@ app.add_middleware(
 app.include_router(assessments.router)
 
 
+def _recover_interrupted_runs() -> None:
+    """Runs execute inside an API process, so any run still marked in flight when this
+    process starts may have died with a previous one. With the in-process lock there is
+    only ever one process, so such runs are certainly dead; with the DB lock other
+    replicas may still be running theirs, so only runs with a stale heartbeat qualify."""
+    from app.database import SessionLocal
+    from app.services.pipeline_lock import recover_interrupted_runs
+
+    db = SessionLocal()
+    try:
+        recovered = recover_interrupted_runs(db, assume_dead=settings.pipeline_lock_backend != "db")
+        if recovered:
+            logger.warning("Marked %d interrupted pipeline run(s) as failed", recovered)
+    except Exception:
+        logger.exception("Interrupted-run recovery failed; continuing startup")
+    finally:
+        db.close()
+
+
 @app.on_event("startup")
 def on_startup() -> None:
     configure_observability()
@@ -52,6 +71,7 @@ def on_startup() -> None:
         logger.error("%s", exc)
         raise
     init_db()
+    _recover_interrupted_runs()
     logger.info(
         "Started app_profile=%s identity=%s mock_llm=%s embeddings=%s vector_index=%s",
         settings.app_profile,
