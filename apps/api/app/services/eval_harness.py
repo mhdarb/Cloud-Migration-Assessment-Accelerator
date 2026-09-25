@@ -158,9 +158,13 @@ def score_extraction(db: Session, assessment_id: str, labels: EstateLabels) -> d
     apps = _entity_keys(db, assessment_id, Application)
     dbs = _entity_keys(db, assessment_id, DatabaseEntity)
 
-    _, _, server_f1 = prf1(servers, labels.expected_servers)
-    _, _, app_f1 = prf1(apps, labels.expected_applications)
-    _, _, db_f1 = prf1(dbs, labels.expected_databases)
+    # Recall is the quality signal we gate on: did we materialize every *known-true* entity?
+    # Precision is reported but not the gate — a pipeline that also discovers real entities
+    # the labels don't enumerate (e.g. services/infra from a code snapshot: a docker-compose
+    # "api" service, postgres/redis deps) is not wrong, and shouldn't fail a regression on it.
+    server_p, server_recall, _ = prf1(servers, labels.expected_servers)
+    app_p, app_recall, _ = prf1(apps, labels.expected_applications)
+    db_p, db_recall, _ = prf1(dbs, labels.expected_databases)
 
     # Sizing-field accuracy: over every planted (server, field, value), was the
     # materialized attribute correct once normalized to canonical units?
@@ -208,9 +212,12 @@ def score_extraction(db: Session, assessment_id: str, labels: EstateLabels) -> d
     sizing_coverage = (sized / len(labels.expected_servers)) if labels.expected_servers else 1.0
 
     return {
-        "server_f1": round(server_f1, 3),
-        "application_f1": round(app_f1, 3),
-        "database_f1": round(db_f1, 3),
+        "server_recall": round(server_recall, 3),
+        "server_precision": round(server_p, 3),
+        "application_recall": round(app_recall, 3),
+        "application_precision": round(app_p, 3),
+        "database_recall": round(db_recall, 3),
+        "database_precision": round(db_p, 3),
         "sizing_field_accuracy": round(sizing_accuracy, 3),
         "grounding_rate": round(grounding_rate, 3),
         "nfr_coverage": round(nfr_recall, 3),

@@ -144,6 +144,22 @@ def test_document_chunker_routes_by_doc_type():
     assert prose_pieces and "row_range" not in prose_pieces[0].metadata
 
 
+def test_inventory_pdf_table_markers_are_row_chunked():
+    """An inventory table extracted from a PDF/DOCX arrives wrapped in <<TABLE>> markers.
+    The inventory router must handle them (row-groups + summary), not treat "<<TABLE>>" as
+    the header."""
+    from app.services.parsers import TABLE_BLOCK_END, TABLE_BLOCK_START
+
+    rows = "\n".join(f"srv-{i} | 4 | 16" for i in range(6))
+    text = f"{TABLE_BLOCK_START}\nname | vcpu | memory_gb\n{rows}\n{TABLE_BLOCK_END}"
+    pieces = DocumentChunker().chunk(
+        [ParsedPage(page=1, text=text)], doc_type=DocumentType.inventory, filename="server-inventory.pdf"
+    )
+    assert any("row_range" in p.metadata for p in pieces), "PDF inventory table should be row-chunked"
+    assert any(p.metadata.get("kind") == "table_summary" for p in pieces), "expected a computed summary"
+    assert not any(TABLE_BLOCK_START in p.text for p in pieces), "markers must be stripped from chunk text"
+
+
 def test_reciprocal_rank_fusion_prefers_agreement_across_lists():
     fused = reciprocal_rank_fusion([["a", "b", "c"], ["b", "a", "d"]], k=60)
     assert fused[0] in {"a", "b"}

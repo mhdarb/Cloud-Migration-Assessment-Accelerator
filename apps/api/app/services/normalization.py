@@ -145,6 +145,23 @@ def header_unit(raw_header: str) -> str | None:
     return match.group(1) if match else None
 
 
+# A hostname followed by a DNS domain whose last label is alphabetic (e.g.
+# "app-01.corp.local", "web.prod.example.com"). Deliberately does NOT match a dotted IPv4
+# ("10.1.0.10", last label numeric) so addresses are never truncated.
+_FQDN_RE = re.compile(r"^([a-z0-9][a-z0-9-]*)\.[a-z0-9.-]*[a-z]{2,}$", re.I)
+
+
+def normalize_host_key(name: str) -> str:
+    """Canonical key for a server, collapsing an FQDN to its short hostname so the same
+    host described as "app-01.corp.local" in one source and "app-01" in another dedupes to
+    one Server row instead of two (which would double-count it in sizing/cost). Dotless
+    names and IP addresses pass through unchanged."""
+    text = (name or "").strip().lower()
+    match = _FQDN_RE.match(text)
+    host = match.group(1) if match else text
+    return re.sub(r"[^a-z0-9]+", "-", host).strip("-") or "unknown"
+
+
 def _capacity_gb(number: float, unit: str) -> float:
     token = _UNIT.match(unit)
     key = token.group() if token else ""

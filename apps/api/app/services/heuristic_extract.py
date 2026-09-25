@@ -11,7 +11,12 @@ from app.schemas.chunking import ChunkPayload
 
 # Single source of truth for the column-alias vocabulary lives in `normalization`;
 # re-exported here because `chunkers` and existing callers import these names from this module.
-from app.services.normalization import CAPACITY_ATTRIBUTES, INFRA_COLUMN_ALIASES, header_unit
+from app.services.normalization import (
+    CAPACITY_ATTRIBUTES,
+    INFRA_COLUMN_ALIASES,
+    header_unit,
+    normalize_host_key,
+)
 from app.services.normalization import canonical_header as _canonical_header
 
 
@@ -257,7 +262,7 @@ def _extract_inventory_columns(chunk: Chunk) -> list[ExtractedClaim]:
             claims.append(
                 make_claim(
                     "server",
-                    normalize_key(server),
+                    normalize_host_key(server),
                     attribute,
                     value,
                     chunk_id=chunk.id,
@@ -354,7 +359,7 @@ def heuristic_extract(chunks: list[Chunk], docs: dict[str, Document]) -> Extract
                     claims.append(
                         make_claim(
                             "server",
-                            normalize_key(server),
+                            normalize_host_key(server),
                             "name",
                             server,
                             chunk_id=chunk.id,
@@ -365,7 +370,7 @@ def heuristic_extract(chunks: list[Chunk], docs: dict[str, Document]) -> Extract
                     claims.append(
                         make_claim(
                             "server",
-                            normalize_key(server),
+                            normalize_host_key(server),
                             "os",
                             cells[1],
                             chunk_id=chunk.id,
@@ -396,7 +401,7 @@ def heuristic_extract(chunks: list[Chunk], docs: dict[str, Document]) -> Extract
                 claims.append(
                     make_claim(
                         "server",
-                        normalize_key(server),
+                        normalize_host_key(server),
                         "name",
                         server,
                         chunk_id=chunk.id,
@@ -409,7 +414,7 @@ def heuristic_extract(chunks: list[Chunk], docs: dict[str, Document]) -> Extract
                         source_type="application",
                         source_key=normalize_key(app_c),
                         target_type="server",
-                        target_key=normalize_key(server),
+                        target_key=normalize_host_key(server),
                         relationship="hosted_on",
                         confidence=conf_base,
                         evidence_quote=line[:240],
@@ -447,7 +452,7 @@ def heuristic_extract(chunks: list[Chunk], docs: dict[str, Document]) -> Extract
                     claims.append(
                         make_claim(
                             "server",
-                            normalize_key(server),
+                            normalize_host_key(server),
                             "os",
                             cells[4],
                             chunk_id=chunk.id,
@@ -510,7 +515,7 @@ def heuristic_extract(chunks: list[Chunk], docs: dict[str, Document]) -> Extract
             claims.append(
                 make_claim(
                     "server",
-                    normalize_key(name),
+                    normalize_host_key(name),
                     "name",
                     name,
                     chunk_id=chunk.id,
@@ -550,7 +555,7 @@ def heuristic_extract(chunks: list[Chunk], docs: dict[str, Document]) -> Extract
             claims.append(
                 make_claim(
                     "server",
-                    normalize_key(server),
+                    normalize_host_key(server),
                     "os",
                     os_val,
                     chunk_id=chunk.id,
@@ -567,7 +572,7 @@ def heuristic_extract(chunks: list[Chunk], docs: dict[str, Document]) -> Extract
                     source_type="application",
                     source_key=normalize_key(app),
                     target_type="server",
-                    target_key=normalize_key(server),
+                    target_key=normalize_host_key(server),
                     relationship="hosted_on",
                     confidence=0.8,
                     evidence_quote=m.group(0)[:240],

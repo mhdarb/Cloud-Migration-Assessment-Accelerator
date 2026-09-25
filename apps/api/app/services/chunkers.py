@@ -738,7 +738,17 @@ class DocumentChunker:
     ) -> list[ChunkPiece]:
         settings = get_settings()
         if doc_type == DocumentType.inventory:
-            pieces = chunk_inventory_rows(pages, settings.chunk_inventory_rows, settings.chunk_size_tokens)
+            # A spreadsheet/CSV inventory arrives as bare pipe rows -> chunk_inventory_rows.
+            # But an inventory table extracted from a PDF/DOCX arrives wrapped in <<TABLE>>
+            # markers; chunk_inventory_rows would treat "<<TABLE>>" as the header, so route
+            # marked pages through the table-marker-aware chunker (same shape-guard +
+            # row-group + computed-summary path, just marker-aware).
+            if any(TABLE_BLOCK_START in (p.text or "") for p in pages):
+                pieces = chunk_prose_with_tables(
+                    pages, settings.chunk_size_tokens, settings.chunk_overlap_tokens, settings.chunk_inventory_rows
+                )
+            else:
+                pieces = chunk_inventory_rows(pages, settings.chunk_inventory_rows, settings.chunk_size_tokens)
         elif doc_type == DocumentType.questionnaire:
             pieces = chunk_questionnaire_pairs(pages)
         else:

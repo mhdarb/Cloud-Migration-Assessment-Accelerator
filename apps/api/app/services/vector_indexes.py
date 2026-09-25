@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +10,8 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.models.entities import Chunk
+
+logger = logging.getLogger(__name__)
 
 
 def embeddings_dir() -> Path:
@@ -128,8 +131,13 @@ class AzureSearchIndex:
     def upsert(
         self, assessment_id: str, chunks: list[Chunk], vectors: list[list[float]]
     ) -> int:
-        from app.azure_clients import get_search_client
+        from app.azure_clients import ensure_search_index, get_search_client
 
+        if not chunks or not vectors:
+            return 0
+        # Create the index on first use if it doesn't exist yet, sized to the embedder's
+        # vector dimension — so a fresh Search service works without a manual provisioning step.
+        ensure_search_index(len(vectors[0]))
         client = get_search_client()
         docs = []
         for c, vec in zip(chunks, vectors, strict=True):
@@ -155,6 +163,7 @@ class AzureSearchIndex:
         query_vector: list[float],
         top_k: int,
     ) -> list[Chunk]:
+        from azure.core.exceptions import ResourceNotFoundError
         from azure.search.documents.models import VectorizedQuery
 
         from app.azure_clients import get_search_client
@@ -165,13 +174,19 @@ class AzureSearchIndex:
             k_nearest_neighbors=top_k,
             fields="content_vector",
         )
-        results = client.search(
-            search_text=query,
-            vector_queries=[vector_query],
-            filter=f"assessment_id eq '{assessment_id}'",
-            top=top_k,
-        )
-        ids = [r["id"] for r in results]
+        try:
+            results = client.search(
+                search_text=query,
+                vector_queries=[vector_query],
+                filter=f"assessment_id eq '{assessment_id}'",
+                top=top_k,
+            )
+            ids = [r["id"] for r in results]
+        except ResourceNotFoundError:
+            # Index doesn't exist yet (nothing indexed) — degrade to no hits rather than
+            # error; the merging retriever still has its other index/keyword lists.
+            logger.warning("Azure Search index missing at query time; returning no vector hits")
+            return []
         return get_chunks_by_ids(db, ids)
 
     def clear(self, assessment_id: str) -> None:

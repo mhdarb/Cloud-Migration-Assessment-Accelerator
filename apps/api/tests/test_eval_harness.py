@@ -106,22 +106,30 @@ def test_estate_eval_meets_regression_floors(estate_name, db_session, assessment
         assert scores[metric] >= floor, (estate_name, metric, scores[metric], floor)
 
 
+# We gate on RECALL (did we find every known-true entity) and the quality metrics; entity
+# *precision* is reported but floored only loosely, because a pipeline that also discovers
+# real entities the labels don't enumerate (code-snapshot services/infra) is not wrong.
 _DEFAULT_FLOORS = {
     "mean_context_recall": 0.90,
     "mean_reciprocal_rank": 0.80,
-    "server_f1": 0.90,
-    "application_f1": 0.90,
-    "database_f1": 0.90,
+    "server_recall": 1.00,
+    "application_recall": 1.00,
+    "database_recall": 1.00,
+    "server_precision": 0.90,
+    "application_precision": 0.90,
+    "database_precision": 0.90,
     "sizing_field_accuracy": 0.90,
     "grounding_rate": 0.90,
     "nfr_coverage": 0.90,
     "sizing_coverage": 0.70,
 }
 # Per-estate overrides where a metric is legitimately lower than the strict default:
-#  - contoso: known extractor noise (the "db-and" pseudo-app) caps app/db F1.
-#  - orion: 3 of 8 hosts are intentionally unsizable (AIX + Solaris are unsupported, and
-#    the 16-vCPU DB host exceeds the local catalog), so sizing_coverage floors at 0.625.
+#  - contoso: its code snapshot (sample-app.zip) legitimately yields extra apps/dbs (a
+#    docker-compose "api" service, postgres/redis deps) not in the doc-derived labels, so
+#    entity precision is lower — recall stays 1.0.
+#  - orion: 3 of 8 hosts are intentionally unsizable (AIX + Solaris unsupported, plus a
+#    16-vCPU DB host exceeding the local catalog), so sizing_coverage floors at 0.625.
 _ESTATE_FLOORS = {
-    "contoso": {"application_f1": 0.60, "database_f1": 0.70},
+    "contoso": {"application_precision": 0.40, "database_precision": 0.50},
     "orion": {"sizing_coverage": 0.60},
 }

@@ -9,6 +9,7 @@ from app.services.normalization import (
     canonical_header,
     comparison_value,
     is_plausible,
+    normalize_host_key,
     to_canonical,
 )
 from app.services.sizing import normalize_workload, size_profile
@@ -115,6 +116,34 @@ def test_implausible_value_dropped_and_flagged_for_review():
     result = size_profile(profile)
     assert result["needs_human_review"] is True
     assert any("implausible" in a.lower() for a in result["assumptions"])
+
+
+def test_normalize_host_key_strips_fqdn_but_not_ip():
+    assert normalize_host_key("app-01.corp.local") == "app-01"
+    assert normalize_host_key("APP-01") == "app-01"
+    assert normalize_host_key("web.prod.example.com") == "web"
+    assert normalize_host_key("records-api") == "records-api"  # dotless, unchanged
+    assert normalize_host_key("10.1.0.10") == "10-1-0-10"  # IP address never truncated
+
+
+def test_fqdn_and_short_host_dedupe_to_one_server():
+    """The same host described as an FQDN in one source and a short name in another must
+    materialize as a single server, not be double-counted in sizing."""
+    from app.models.entities import Chunk, Document, DocumentType
+    from app.services.heuristic_extract import heuristic_extract
+
+    doc = Document(id="d", doc_type=DocumentType.inventory)
+    c1 = Chunk(
+        id="c1", assessment_id="a", document_id="d", chunk_index=0,
+        text="hostname | os\napp-01.corp.local | RHEL 9",
+    )
+    c2 = Chunk(
+        id="c2", assessment_id="a", document_id="d", chunk_index=1,
+        text="hostname | vcpu\napp-01 | 8",
+    )
+    claims = heuristic_extract([c1, c2], {"d": doc}).claims
+    server_keys = {c.entity_key for c in claims if c.entity_type == "server"}
+    assert server_keys == {"app-01"}
 
 
 def test_heterogeneous_headers_and_os_column_extracted():
