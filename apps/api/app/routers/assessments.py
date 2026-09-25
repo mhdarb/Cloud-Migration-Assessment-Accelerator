@@ -1,10 +1,20 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Response, UploadFile
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.database import get_db
-from app.models.entities import Claim, Conflict, InfrastructureRecommendation, PipelineStatus
+from app.models.entities import (
+    Claim,
+    Conflict,
+    DependencyEdge,
+    InfrastructureRecommendation,
+    PipelineStatus,
+)
 from app.schemas.api import (
     AskQuestionRequest,
     AssessmentAnswersOut,
@@ -12,16 +22,21 @@ from app.schemas.api import (
     AssessmentListOut,
     AssessmentOut,
     AssessmentUpdate,
+    BatchClaimReviewRequest,
     BlastRadiusOut,
     ClaimOut,
     ClaimReviewRequest,
     ConflictOut,
+    DependencyEdgeOut,
+    DismissConflictRequest,
     EntityOut,
     EvidenceOut,
     FollowUpNoteRequest,
     GraphOut,
     InfrastructureRecommendationOut,
     ReportOut,
+    ReviewDecisionRequest,
+    ReviewStatusOut,
 )
 from app.services import assessment_service as assessments
 from app.services.assessment_questions import build_assessment_answers
@@ -31,6 +46,7 @@ from app.services.pipeline import run_pipeline
 from app.services.pipeline_lock import is_in_flight
 from app.services.providers import get_retriever
 from app.services.report import report_to_schema
+from app.services.review import review_queue_status
 
 router = APIRouter(prefix="/assessments", tags=["assessments"])
 
@@ -209,6 +225,25 @@ def list_claims(
     return [_claim_out(db, row, evidence_by_chunk) for row in rows]
 
 
+_BUSY_DETAIL = (
+    "A pipeline run is queued or in progress for this assessment; review decisions can't "
+    "be applied until it finishes (the run rebuilds the items being reviewed)."
+)
+
+
+@contextmanager
+def _review_errors(not_found: str) -> Iterator[None]:
+    """Map review-service exceptions to HTTP errors consistently."""
+    try:
+        yield
+    except assessments.PipelineBusy as exc:
+        raise HTTPException(409, _BUSY_DETAIL) from exc
+    except assessments.AssessmentNotFound as exc:
+        raise HTTPException(404, not_found) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 @router.post("/{assessment_id}/claims/{claim_id}/review", response_model=ClaimOut)
 def review_claim(
     assessment_id: str,
@@ -217,7 +252,7 @@ def review_claim(
     db: Session = Depends(get_db),
 ) -> ClaimOut:
     assessment = _assessment(db, assessment_id)
-    try:
+    with _review_errors("Claim not found"):
         updated = assessments.review_claim(
             db,
             assessment,
@@ -226,12 +261,114 @@ def review_claim(
             body.override_value,
             body.notes,
             retriever=_questions_retriever(),
+            reviewer=body.reviewer,
         )
-    except assessments.AssessmentNotFound as exc:
-        raise HTTPException(404, "Claim not found") from exc
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
     return _claim_out(db, updated)
+
+
+@router.post("/{assessment_id}/claims/review-batch", response_model=list[ClaimOut])
+def review_claims_batch(
+    assessment_id: str,
+    body: BatchClaimReviewRequest,
+    db: Session = Depends(get_db),
+) -> list[ClaimOut]:
+    """Apply many claim decisions at once — validated all-or-nothing, one rebuild."""
+    assessment = _assessment(db, assessment_id)
+    with _review_errors("Claim not found"):
+        updated = assessments.review_claims(
+            db,
+            assessment,
+            [
+                assessments.ClaimReview(i.claim_id, i.action, i.override_value, i.notes)
+                for i in body.reviews
+            ],
+            reviewer=body.reviewer,
+            retriever=_questions_retriever(),
+        )
+    return [_claim_out(db, c) for c in updated]
+
+
+@router.post("/{assessment_id}/conflicts/{conflict_id}/dismiss", response_model=ConflictOut)
+def dismiss_conflict(
+    assessment_id: str,
+    conflict_id: str,
+    body: DismissConflictRequest,
+    db: Session = Depends(get_db),
+) -> ConflictOut:
+    """None of the candidate values is right: record the attribute as unknown."""
+    assessment = _assessment(db, assessment_id)
+    with _review_errors("Conflict not found"):
+        conflict = assessments.dismiss_conflict(
+            db, assessment, conflict_id, body.notes,
+            reviewer=body.reviewer, retriever=_questions_retriever(),
+        )
+    return ConflictOut.model_validate(conflict)
+
+
+@router.get("/{assessment_id}/edges", response_model=list[DependencyEdgeOut])
+def list_edges(
+    assessment_id: str,
+    review_only: bool = False,
+    db: Session = Depends(get_db),
+) -> list[DependencyEdgeOut]:
+    _assessment(db, assessment_id)
+    q = db.query(DependencyEdge).filter(DependencyEdge.assessment_id == assessment_id)
+    if review_only:
+        q = q.filter(DependencyEdge.needs_human_review.is_(True))
+    return [DependencyEdgeOut.model_validate(e) for e in q.order_by(DependencyEdge.confidence.asc()).all()]
+
+
+@router.post("/{assessment_id}/edges/{edge_id}/review", response_model=DependencyEdgeOut)
+def review_edge(
+    assessment_id: str,
+    edge_id: str,
+    body: ReviewDecisionRequest,
+    db: Session = Depends(get_db),
+) -> DependencyEdgeOut:
+    """Accept or reject a dependency edge (rejected edges drop out of graph and report)."""
+    assessment = _assessment(db, assessment_id)
+    with _review_errors("Dependency edge not found"):
+        edge = assessments.review_edge(
+            db, assessment, edge_id, body.action, body.notes,
+            reviewer=body.reviewer, retriever=_questions_retriever(),
+        )
+    return DependencyEdgeOut.model_validate(edge)
+
+
+@router.post(
+    "/{assessment_id}/recommendations/{recommendation_id}/review",
+    response_model=InfrastructureRecommendationOut,
+)
+def review_recommendation(
+    assessment_id: str,
+    recommendation_id: str,
+    body: ReviewDecisionRequest,
+    db: Session = Depends(get_db),
+) -> InfrastructureRecommendationOut:
+    """Sign off (accept) or reject a flagged sizing recommendation."""
+    assessment = _assessment(db, assessment_id)
+    with _review_errors("Recommendation not found"):
+        rec = assessments.review_recommendation(
+            db, assessment, recommendation_id, body.action, body.notes,
+            reviewer=body.reviewer, retriever=_questions_retriever(),
+        )
+    return InfrastructureRecommendationOut.model_validate(rec)
+
+
+@router.get("/{assessment_id}/review-status", response_model=ReviewStatusOut)
+def review_status(assessment_id: str, db: Session = Depends(get_db)) -> ReviewStatusOut:
+    """Everything that still blocks 'Complete review'."""
+    _assessment(db, assessment_id)
+    queue = review_queue_status(db, assessment_id)
+    return ReviewStatusOut(
+        pending_claims=queue.pending_claims,
+        open_conflicts=queue.open_conflicts,
+        pending_edges=queue.pending_edges,
+        pending_recommendations=queue.pending_recommendations,
+        clear=queue.clear,
+        summary=queue.describe(),
+        enforce_review=get_settings().enforce_review,
+    )
 
 
 @router.get("/{assessment_id}/entities", response_model=list[EntityOut])
@@ -330,7 +467,7 @@ def complete_assessment_review(
 ) -> AssessmentOut:
     assessment = _assessment(db, assessment_id)
     try:
-        updated = assessments.finish_review(db, assessment)
+        updated = assessments.finish_review(db, assessment, retriever=_questions_retriever())
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     return assessments.assessment_out(updated)

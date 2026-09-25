@@ -6,13 +6,18 @@ import {
   Assessment,
   AssessmentAnswers,
   Claim,
+  ClaimReviewInput,
   Conflict,
+  DependencyEdge,
   Entity,
   GraphOut,
   InfrastructureRecommendation,
   Report,
+  ReviewStatus,
 } from "@/lib/api";
 import { isTerminal } from "@/lib/status";
+
+const REVIEWER_KEY = "cmaa.reviewer";
 
 export function useAssessment(id: string) {
   const [assessment, setAssessment] = useState<Assessment | null>(null);
@@ -25,8 +30,30 @@ export function useAssessment(id: string) {
   const [recommendations, setRecommendations] = useState<
     InfrastructureRecommendation[]
   >([]);
+  const [reviewEdges, setReviewEdges] = useState<DependencyEdge[]>([]);
+  const [reviewStatus, setReviewStatus] = useState<ReviewStatus | null>(null);
+  const [reviewer, setReviewerState] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // The reviewer's name is recorded on every decision for the audit trail. Remembered per
+  // browser as a convenience only (storage can be unavailable, e.g. private windows).
+  useEffect(() => {
+    try {
+      setReviewerState(localStorage.getItem(REVIEWER_KEY) ?? "");
+    } catch {
+      /* storage unavailable */
+    }
+  }, []);
+  const setReviewer = (name: string) => {
+    setReviewerState(name);
+    try {
+      localStorage.setItem(REVIEWER_KEY, name);
+    } catch {
+      /* storage unavailable */
+    }
+  };
+  const reviewerOrUndefined = () => reviewer.trim() || undefined;
   const [pollGeneration, setPollGeneration] = useState(0);
 
   const loadCore = useCallback(async () => {
@@ -43,6 +70,8 @@ export function useAssessment(id: string) {
       api.conflicts(id),
       api.assessmentQuestions(id),
       api.recommendations(id),
+      api.edges(id, true),
+      api.reviewStatus(id),
     ]);
     const failed: string[] = [];
     const assign = <T,>(
@@ -59,6 +88,8 @@ export function useAssessment(id: string) {
     assign(settled[3], "conflicts", setConflicts);
     assign(settled[4], "questions", setAnswers);
     assign(settled[5], "recommendations", setRecommendations);
+    assign(settled[6], "dependency edges", setReviewEdges);
+    assign(settled[7], "review status", setReviewStatus);
 
     try {
       setReport(await api.report(id));
@@ -120,6 +151,13 @@ export function useAssessment(id: string) {
     }
   }, []);
 
+  // After any review decision, reload everything it can affect (entities, sizing, report,
+  // review status, activity feed).
+  const refreshAfterReview = async () => {
+    await loadDetails("completed");
+    await loadCore();
+  };
+
   const onReview = (
     claimId: string,
     action: string,
@@ -127,10 +165,37 @@ export function useAssessment(id: string) {
     notes?: string
   ) =>
     runAction(async () => {
-      await api.reviewClaim(id, claimId, action, override_value, notes);
-      await loadDetails("completed");
-      await loadCore();
+      await api.reviewClaim(id, claimId, action, override_value, notes, reviewerOrUndefined());
+      await refreshAfterReview();
     }, "Review failed");
+
+  const onReviewBatch = (reviews: ClaimReviewInput[]) =>
+    runAction(async () => {
+      await api.reviewClaims(id, reviews, reviewerOrUndefined());
+      await refreshAfterReview();
+    }, "Batch review failed");
+
+  const onDismissConflict = (conflictId: string, notes?: string) =>
+    runAction(async () => {
+      await api.dismissConflict(id, conflictId, notes, reviewerOrUndefined());
+      await refreshAfterReview();
+    }, "Dismiss conflict failed");
+
+  const onReviewEdge = (edgeId: string, action: "accept" | "reject", notes?: string) =>
+    runAction(async () => {
+      await api.reviewEdge(id, edgeId, action, notes, reviewerOrUndefined());
+      await refreshAfterReview();
+    }, "Edge review failed");
+
+  const onReviewRecommendation = (
+    recommendationId: string,
+    action: "accept" | "reject",
+    notes?: string
+  ) =>
+    runAction(async () => {
+      await api.reviewRecommendation(id, recommendationId, action, notes, reviewerOrUndefined());
+      await refreshAfterReview();
+    }, "Recommendation review failed");
 
   const onRerun = () =>
     runAction(async () => {
@@ -141,6 +206,7 @@ export function useAssessment(id: string) {
   const onCompleteReview = () =>
     runAction(async () => {
       setAssessment(await api.completeReview(id));
+      await loadDetails("completed"); // sign-off rebuilds the report with polished prose
     }, "Complete review failed");
 
   const onAddFollowUp = (note: string) => {
@@ -198,10 +264,18 @@ export function useAssessment(id: string) {
     conflicts,
     answers,
     recommendations,
+    reviewEdges,
+    reviewStatus,
+    reviewer,
+    setReviewer,
     error,
     setError,
     busy,
     onReview,
+    onReviewBatch,
+    onDismissConflict,
+    onReviewEdge,
+    onReviewRecommendation,
     onRerun,
     onCompleteReview,
     onAddFollowUp,

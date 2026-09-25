@@ -242,61 +242,6 @@ def _materialize_entities(db: Session, assessment_id: str, claims: list[Claim]) 
             )
 
 
-def apply_claim_review(
-    db: Session,
-    claim: Claim,
-    action: str,
-    override_value: str | None = None,
-    notes: str | None = None,
-) -> Claim:
-    action = action.lower()
-    if action == "accept":
-        claim.review_status = ReviewStatus.accepted
-        claim.needs_human_review = False
-        claim.is_selected = True
-    elif action == "override":
-        if not override_value:
-            raise ValueError("override_value required for override action")
-        claim.review_status = ReviewStatus.overridden
-        claim.override_value = override_value
-        claim.needs_human_review = False
-        claim.is_selected = True
-    elif action == "reject":
-        claim.review_status = ReviewStatus.rejected
-        claim.needs_human_review = False
-        claim.is_selected = False
-    else:
-        raise ValueError("action must be accept, override, or reject")
-    claim.review_notes = notes
-
-    # If part of a conflict, mark conflict resolved when accepted/overridden
-    conflicts = (
-        db.query(Conflict)
-        .filter(Conflict.assessment_id == claim.assessment_id)
-        .all()
-    )
-    for conflict in conflicts:
-        if claim.id in (conflict.claim_ids or []):
-            if action in {"accept", "override"}:
-                conflict.selected_claim_id = claim.id
-                conflict.status = ConflictStatus.resolved
-                conflict.resolution_notes = notes or f"Resolved via human {action}"
-                # deselect siblings
-                siblings = (
-                    db.query(Claim)
-                    .filter(Claim.id.in_(conflict.claim_ids), Claim.id != claim.id)
-                    .all()
-                )
-                for s in siblings:
-                    s.is_selected = False
-            elif action == "reject" and conflict.selected_claim_id == claim.id:
-                conflict.selected_claim_id = None
-
-    db.commit()
-    db.refresh(claim)
-    return claim
-
-
 def rematerialize_entities(db: Session, assessment_id: str) -> None:
     db.query(Application).filter(Application.assessment_id == assessment_id).delete()
     db.query(Server).filter(Server.assessment_id == assessment_id).delete()

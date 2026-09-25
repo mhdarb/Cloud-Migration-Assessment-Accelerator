@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.entities import (
@@ -15,8 +16,18 @@ from app.models.entities import (
     Document,
     InfrastructureRecommendation,
     Interface,
+    ReviewStatus,
     Server,
 )
+
+
+def not_rejected_edge():
+    """SQL filter: a dependency edge a reviewer has rejected is excluded from the graph,
+    report, and inference (pre-existing rows have a NULL status, which counts as pending)."""
+    return or_(
+        DependencyEdge.review_status.is_(None),
+        DependencyEdge.review_status != ReviewStatus.rejected,
+    )
 
 
 @dataclass
@@ -49,7 +60,7 @@ def load_inventory(
         .all(),
         interfaces=db.query(Interface).filter(Interface.assessment_id == assessment_id).all(),
         edges=db.query(DependencyEdge)
-        .filter(DependencyEdge.assessment_id == assessment_id)
+        .filter(DependencyEdge.assessment_id == assessment_id, not_rejected_edge())
         .all(),
     )
     if documents:

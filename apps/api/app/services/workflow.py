@@ -6,44 +6,18 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.models.entities import (
-    Assessment,
-    Claim,
-    Conflict,
-    ConflictStatus,
-    ReviewStatus,
-    WorkflowStage,
-)
-
-
-def review_queue_clear(db: Session, assessment_id: str) -> tuple[int, int]:
-    pending = (
-        db.query(Claim)
-        .filter(
-            Claim.assessment_id == assessment_id,
-            Claim.needs_human_review.is_(True),
-        )
-        .count()
-    )
-    open_conflicts = (
-        db.query(Conflict)
-        .filter(
-            Conflict.assessment_id == assessment_id,
-            Conflict.status == ConflictStatus.open,
-        )
-        .count()
-    )
-    return pending, open_conflicts
+from app.models.entities import Assessment, Claim, ReviewStatus, WorkflowStage
+from app.services.review import review_queue_status
 
 
 def complete_review(db: Session, assessment: Assessment) -> Assessment:
-    """Advance to follow_up when review queue and open conflicts are clear."""
+    """Advance to follow_up once nothing is pending review: claims, open conflicts,
+    low-confidence dependency edges, and flagged sizing recommendations."""
     settings = get_settings()
-    pending, open_conflicts = review_queue_clear(db, assessment.id)
-    if settings.enforce_review and (pending or open_conflicts):
+    queue = review_queue_status(db, assessment.id)
+    if settings.enforce_review and not queue.clear:
         raise ValueError(
-            f"Review incomplete: {pending} claim(s) need review, "
-            f"{open_conflicts} open conflict(s). Resolve them before marking ready."
+            f"Review incomplete: {queue.describe()}. Resolve them before marking ready."
         )
     assessment.workflow_stage = WorkflowStage.follow_up
     metrics = dict(assessment.metrics or {})
@@ -76,9 +50,9 @@ def capture_review_learning(
     claim: Claim,
     action: str,
 ) -> None:
-    """Follow-up: record rejects/overrides as reusable learning signals."""
-    if action not in {"reject", "override"}:
-        return
+    """Follow-up feed entry for a claim decision. Every action is logged (accepts too) —
+    the complete, uncapped audit trail lives in the `review_decisions` table; this capped
+    log is the human-readable activity feed shown in the UI."""
     append_follow_up(
         assessment,
         event=f"claim_{action}",
@@ -95,5 +69,6 @@ def capture_review_learning(
                 else str(claim.review_status)
             ),
             "notes": claim.review_notes,
+            "reviewed_by": claim.reviewed_by,
         },
     )

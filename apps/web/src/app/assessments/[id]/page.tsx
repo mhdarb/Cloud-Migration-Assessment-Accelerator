@@ -33,10 +33,18 @@ function AssessmentDetail() {
     conflicts,
     answers,
     recommendations,
+    reviewEdges,
+    reviewStatus,
+    reviewer,
+    setReviewer,
     error,
     setError,
     busy,
     onReview,
+    onReviewBatch,
+    onDismissConflict,
+    onReviewEdge,
+    onReviewRecommendation,
     onRerun,
     onCompleteReview,
     onAddFollowUp,
@@ -50,6 +58,7 @@ function AssessmentDetail() {
   const [editing, setEditing] = useState(false);
   const [draftName, setDraftName] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmRerun, setConfirmRerun] = useState(false);
 
   const setTab = (next: Tab) => {
     router.replace(`/assessments/${id}?tab=${next}`, { scroll: false });
@@ -64,6 +73,14 @@ function AssessmentDetail() {
   }
 
   const reviewQueue = claims.filter((c) => c.needs_human_review);
+  // Everything that blocks sign-off, not just claims (conflicts, edges, sizing too).
+  const pendingReview = reviewStatus
+    ? reviewStatus.pending_claims +
+      reviewStatus.open_conflicts +
+      reviewStatus.pending_edges +
+      reviewStatus.pending_recommendations
+    : reviewQueue.length;
+  const reviewBlocked = Boolean(reviewStatus?.enforce_review && !reviewStatus.clear);
 
   return (
     <div className="space-y-6">
@@ -136,11 +153,20 @@ function AssessmentDetail() {
           >
             Delete
           </button>
-          <button className="btn btn-secondary" disabled={busy} onClick={onRerun}>
+          <button
+            className="btn btn-secondary"
+            disabled={busy || isInFlight(assessment.status)}
+            onClick={() => setConfirmRerun(true)}
+          >
             Re-run pipeline
           </button>
           {assessment.status === "completed" && assessment.workflow_stage === "review" && (
-            <button className="btn btn-primary" disabled={busy} onClick={onCompleteReview}>
+            <button
+              className="btn btn-primary"
+              disabled={busy || reviewBlocked}
+              title={reviewBlocked ? `Still needs a decision: ${reviewStatus?.summary}` : undefined}
+              onClick={onCompleteReview}
+            >
               Complete review
             </button>
           )}
@@ -162,7 +188,7 @@ function AssessmentDetail() {
             onClick={() => setTab(t)}
           >
             {t}
-            {t === "review" && reviewQueue.length > 0 ? ` (${reviewQueue.length})` : ""}
+            {t === "review" && pendingReview > 0 ? ` (${pendingReview})` : ""}
           </button>
         ))}
       </div>
@@ -194,11 +220,37 @@ function AssessmentDetail() {
         <ReviewTab
           assessment={assessment}
           reviewQueue={reviewQueue}
+          claims={claims}
+          conflicts={conflicts}
+          reviewEdges={reviewEdges}
+          recommendations={recommendations}
+          reviewStatus={reviewStatus}
+          reviewer={reviewer}
+          setReviewer={setReviewer}
           busy={busy}
           onReview={onReview}
+          onReviewBatch={onReviewBatch}
+          onDismissConflict={onDismissConflict}
+          onReviewEdge={onReviewEdge}
+          onReviewRecommendation={onReviewRecommendation}
           onAddFollowUp={onAddFollowUp}
         />
       )}
+      <ConfirmDialog
+        open={confirmRerun}
+        title="Re-run pipeline"
+        message={
+          "Re-running rebuilds every finding from the documents. Your review decisions are " +
+          "kept and re-applied automatically; items whose source evidence changed will need " +
+          "review again, and you'll need to complete the review again."
+        }
+        confirmLabel="Re-run"
+        onCancel={() => setConfirmRerun(false)}
+        onConfirm={() => {
+          setConfirmRerun(false);
+          void onRerun();
+        }}
+      />
       <ConfirmDialog
         open={confirmDelete}
         title="Delete assessment"

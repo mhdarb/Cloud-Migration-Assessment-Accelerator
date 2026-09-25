@@ -103,6 +103,9 @@ export function OverviewTab({
         </ul>
         <label className="sans mt-3 block text-xs text-[var(--muted)]">
           Add documents
+          <span className="mt-0.5 block text-xs normal-case text-[var(--muted)]">
+            Adding files re-runs the pipeline. Review decisions are kept and re-applied.
+          </span>
           <input
             className="input mt-1"
             type="file"
@@ -131,7 +134,7 @@ export function OverviewTab({
       <ConfirmDialog
         open={pendingRemove !== null}
         title="Remove document"
-        message={`Remove ${pendingRemove?.filename}? The pipeline will re-run if other documents remain.`}
+        message={`Remove ${pendingRemove?.filename}? The pipeline will re-run if other documents remain. Review decisions are kept and re-applied; facts that came only from this document will disappear.`}
         confirmLabel="Remove"
         danger
         onCancel={() => setPendingRemove(null)}

@@ -111,7 +111,10 @@ def generate_report(
         "review_queue_count": len(review_pending),
         "recommendation_count": len(recommendations),
     }
-    assessment.metrics = metrics
+    # Merge, don't replace: `metrics` also holds the review activity feed
+    # (`follow_up_log`), the review sign-off, and the pipeline's run metrics — replacing
+    # it wiped all of those every time the report was rebuilt (e.g. after each review).
+    assessment.metrics = {**(assessment.metrics or {}), **metrics}
 
     code_docs = sum(
         1

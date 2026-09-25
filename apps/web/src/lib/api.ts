@@ -89,6 +89,45 @@ export type Claim = {
   override_value: string | null;
   review_notes: string | null;
   is_selected: boolean;
+} & ReviewAudit;
+
+/** Who made a review decision, and when (UTC ISO string). */
+export type ReviewAudit = {
+  reviewed_at?: string | null;
+  reviewed_by?: string | null;
+};
+
+export type DependencyEdge = {
+  id: string;
+  source_type: string;
+  source_key: string;
+  target_type: string;
+  target_key: string;
+  rel_type: string;
+  confidence: number;
+  evidence_quote: string | null;
+  rationale: string | null;
+  needs_human_review: boolean;
+  review_status: string | null;
+  review_notes: string | null;
+} & ReviewAudit;
+
+/** Everything that still blocks "Complete review". */
+export type ReviewStatus = {
+  pending_claims: number;
+  open_conflicts: number;
+  pending_edges: number;
+  pending_recommendations: number;
+  clear: boolean;
+  summary: string;
+  enforce_review: boolean;
+};
+
+export type ClaimReviewInput = {
+  claim_id: string;
+  action: "accept" | "override" | "reject";
+  override_value?: string;
+  notes?: string;
 };
 
 export type Evidence = {
@@ -233,12 +272,15 @@ export type InfrastructureRecommendation = {
   };
   confidence: number;
   needs_human_review: boolean;
-};
+  review_status?: string | null;
+  review_notes?: string | null;
+} & ReviewAudit;
 
 export type FollowUpEntry = {
   at?: string;
   event?: string;
-  detail?: { note?: string };
+  /** Free-text notes use `note` (follow-up notes) or `notes` (review decisions). */
+  detail?: { note?: string; notes?: string | null; reviewed_by?: string | null };
 };
 
 export function followUpLog(
@@ -307,13 +349,54 @@ export const api = {
     claimId: string,
     action: string,
     override_value?: string,
-    notes?: string
+    notes?: string,
+    reviewer?: string
   ) =>
     requestJson<Claim>(`/assessments/${assessmentId}/claims/${claimId}/review`, "POST", {
       action,
       override_value,
       notes,
+      reviewer,
     }),
+  /** All-or-nothing batch of claim decisions; the server rebuilds once. */
+  reviewClaims: (assessmentId: string, reviews: ClaimReviewInput[], reviewer?: string) =>
+    requestJson<Claim[]>(`/assessments/${assessmentId}/claims/review-batch`, "POST", {
+      reviews,
+      reviewer,
+    }),
+  dismissConflict: (assessmentId: string, conflictId: string, notes?: string, reviewer?: string) =>
+    requestJson<Conflict>(
+      `/assessments/${assessmentId}/conflicts/${conflictId}/dismiss`,
+      "POST",
+      { notes, reviewer }
+    ),
+  edges: (id: string, reviewOnly = false) =>
+    request<DependencyEdge[]>(`/assessments/${id}/edges${reviewOnly ? "?review_only=true" : ""}`),
+  reviewEdge: (
+    assessmentId: string,
+    edgeId: string,
+    action: "accept" | "reject",
+    notes?: string,
+    reviewer?: string
+  ) =>
+    requestJson<DependencyEdge>(`/assessments/${assessmentId}/edges/${edgeId}/review`, "POST", {
+      action,
+      notes,
+      reviewer,
+    }),
+  reviewRecommendation: (
+    assessmentId: string,
+    recommendationId: string,
+    action: "accept" | "reject",
+    notes?: string,
+    reviewer?: string
+  ) =>
+    requestJson<InfrastructureRecommendation>(
+      `/assessments/${assessmentId}/recommendations/${recommendationId}/review`,
+      "POST",
+      { action, notes, reviewer }
+    ),
+  reviewStatus: (id: string) => request<ReviewStatus>(`/assessments/${id}/review-status`),
   entities: (id: string) => request<Entity[]>(`/assessments/${id}/entities`),
   graph: (id: string) => request<GraphOut>(`/assessments/${id}/graph`),
   blastRadius: (id: string, node: string, depth = 2) =>

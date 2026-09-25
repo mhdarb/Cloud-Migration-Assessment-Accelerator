@@ -20,6 +20,7 @@ from app.services.evidence import (
     public_evidence_fields,
     resolve_evidence_map,
 )
+from app.services.inventory import not_rejected_edge
 from app.services.llm_reasoning import GroundedProse, get_grounded_prose
 from app.services.ports import Retriever
 from app.services.questionnaire_extract import normalize_question_key
@@ -349,7 +350,7 @@ def build_assessment_answers(
     claims = _selected_claims(db, assessment_id)
     edges = (
         db.query(DependencyEdge)
-        .filter(DependencyEdge.assessment_id == assessment_id)
+        .filter(DependencyEdge.assessment_id == assessment_id, not_rejected_edge())
         .all()
     )
     answers = _standard_answers(claims, edges)

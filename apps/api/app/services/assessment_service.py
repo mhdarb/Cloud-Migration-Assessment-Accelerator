@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import shutil
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import UploadFile
@@ -10,17 +12,37 @@ from app.config import get_settings
 from app.models.entities import (
     Assessment,
     Claim,
+    Conflict,
+    DependencyEdge,
     Document,
     EngagementQuestion,
+    InfrastructureRecommendation,
     PipelineStatus,
+    ReviewDecision,
     WorkflowStage,
 )
 from app.schemas.api import AssessmentOut, DocumentOut, EntityOut
 from app.services.assessment_questions import build_assessment_answers, persist_ad_hoc_question
 from app.services.inventory import load_inventory
+from app.services.llm_clients import DisabledChatCompleter
+from app.services.llm_reasoning import GroundedProse
 from app.services.ports import Retriever
-from app.services.reconciliation import apply_claim_review, rematerialize_entities
+from app.services.reconciliation import rematerialize_entities
 from app.services.report import generate_report
+from app.services.review import (
+    apply_claim_decision,
+    apply_conflict_dismissal,
+    apply_item_decision,
+    claim_key,
+    conflict_key,
+    edge_key,
+    reapply_recommendation_decisions,
+    recommendation_key,
+    record_decision,
+    review_queue_status,
+    validate_claim_action,
+    validate_decision_action,
+)
 from app.services.sizing import generate_recommendations
 from app.services.storage import save_upload
 from app.services.workflow import append_follow_up, capture_review_learning, complete_review
@@ -96,6 +118,8 @@ def delete_assessment(db: Session, assessment: Assessment) -> None:
     db.query(EngagementQuestion).filter(
         EngagementQuestion.assessment_id == assessment_id
     ).delete()
+    # Review decisions survive re-runs by design, so they must be removed explicitly here.
+    db.query(ReviewDecision).filter(ReviewDecision.assessment_id == assessment_id).delete()
     db.query(Document).filter(Document.assessment_id == assessment_id).delete()
     db.delete(assessment)
     db.commit()
@@ -162,6 +186,91 @@ async def add_uploads(db: Session, assessment: Assessment, files: list[UploadFil
     db.refresh(assessment)
 
 
+@dataclass(frozen=True)
+class ClaimReview:
+    claim_id: str
+    action: str
+    override_value: str | None = None
+    notes: str | None = None
+
+
+def _ensure_reviewable(assessment: Assessment) -> None:
+    """Reviews only apply to a finished run. While a run is queued or in progress,
+    `clear_derived` is about to delete the very rows being reviewed."""
+    if assessment.status == PipelineStatus.completed:
+        return
+    if assessment.status == PipelineStatus.failed:
+        raise ValueError("The last pipeline run failed; re-run it before reviewing")
+    raise PipelineBusy()
+
+
+def _refresh_after_review(
+    db: Session,
+    assessment_id: str,
+    retriever: Retriever | None,
+    *,
+    rebuild_entities: bool = True,
+    polish: bool = False,
+) -> None:
+    """Bring derived views in line with the latest decisions.
+
+    Per-click rebuilds (`polish=False`) are deterministic: no LLM-written sizing
+    explanations or report prose, so reviewing 50 items doesn't cost 50 rounds of LLM
+    calls. `finish_review` does one polished rebuild when the reviewer signs off.
+    """
+    if rebuild_entities:
+        rematerialize_entities(db, assessment_id)
+        generate_recommendations(db, assessment_id, llm_explanations=polish)
+        reapply_recommendation_decisions(db, assessment_id)
+        db.commit()
+    prose = None if polish else GroundedProse(DisabledChatCompleter())
+    generate_report(db, assessment_id, retriever=retriever, prose=prose)
+
+
+def review_claims(
+    db: Session,
+    assessment: Assessment,
+    reviews: list[ClaimReview],
+    *,
+    reviewer: str | None = None,
+    retriever: Retriever | None = None,
+) -> list[Claim]:
+    """Apply one or many claim decisions, all-or-nothing, with a single rebuild."""
+    _ensure_reviewable(assessment)
+    if not reviews:
+        raise ValueError("No reviews provided")
+    ids = [r.claim_id for r in reviews]
+    claims = {
+        c.id: c
+        for c in db.query(Claim)
+        .filter(Claim.assessment_id == assessment.id, Claim.id.in_(ids))
+        .all()
+    }
+    missing = [i for i in ids if i not in claims]
+    if missing:
+        raise AssessmentNotFound(missing[0])
+    # Validate every item before touching any of them.
+    actions = [
+        validate_claim_action(claims[r.claim_id], r.action, r.override_value) for r in reviews
+    ]
+    now = datetime.utcnow()
+    for review, action in zip(reviews, actions, strict=True):
+        claim = claims[review.claim_id]
+        override = review.override_value.strip() if action == "override" and review.override_value else None
+        apply_claim_decision(
+            db, claim, action, override_value=override, notes=review.notes, reviewer=reviewer, at=now
+        )
+        record_decision(
+            db, assessment.id, "claim", claim_key(claim), action,
+            override_value=override, notes=review.notes, reviewer=reviewer,
+        )
+        capture_review_learning(assessment, claim, action)
+        db.flush()
+    db.commit()
+    _refresh_after_review(db, assessment.id, retriever)
+    return [claims[i] for i in ids]
+
+
 def review_claim(
     db: Session,
     assessment: Assessment,
@@ -170,21 +279,126 @@ def review_claim(
     override_value: str | None,
     notes: str | None,
     retriever: Retriever | None = None,
+    reviewer: str | None = None,
 ) -> Claim:
-    claim = (
-        db.query(Claim)
-        .filter(Claim.id == claim_id, Claim.assessment_id == assessment.id)
+    return review_claims(
+        db,
+        assessment,
+        [ClaimReview(claim_id, action, override_value, notes)],
+        reviewer=reviewer,
+        retriever=retriever,
+    )[0]
+
+
+def dismiss_conflict(
+    db: Session,
+    assessment: Assessment,
+    conflict_id: str,
+    notes: str | None,
+    *,
+    reviewer: str | None = None,
+    retriever: Retriever | None = None,
+) -> Conflict:
+    """'None of these values is right': the attribute is recorded as unknown."""
+    _ensure_reviewable(assessment)
+    conflict = (
+        db.query(Conflict)
+        .filter(Conflict.id == conflict_id, Conflict.assessment_id == assessment.id)
         .one_or_none()
     )
-    if not claim:
-        raise AssessmentNotFound(claim_id)
-    updated = apply_claim_review(db, claim, action, override_value, notes)
-    capture_review_learning(assessment, updated, action.lower())
+    if not conflict:
+        raise AssessmentNotFound(conflict_id)
+    apply_conflict_dismissal(db, conflict, notes=notes, reviewer=reviewer)
+    record_decision(
+        db, assessment.id, "conflict", conflict_key(conflict), "dismiss", notes=notes, reviewer=reviewer
+    )
+    append_follow_up(
+        assessment,
+        event="conflict_dismissed",
+        detail={
+            "conflict_id": conflict.id,
+            "entity": f"{conflict.entity_type}:{conflict.entity_key}.{conflict.attribute}",
+            "notes": notes,
+            "reviewed_by": reviewer,
+        },
+    )
     db.commit()
-    rematerialize_entities(db, assessment.id)
-    generate_recommendations(db, assessment.id)
-    generate_report(db, assessment.id, retriever=retriever)
-    return updated
+    _refresh_after_review(db, assessment.id, retriever)
+    return conflict
+
+
+def review_edge(
+    db: Session,
+    assessment: Assessment,
+    edge_id: str,
+    action: str,
+    notes: str | None,
+    *,
+    reviewer: str | None = None,
+    retriever: Retriever | None = None,
+) -> DependencyEdge:
+    _ensure_reviewable(assessment)
+    action = validate_decision_action(action)
+    edge = (
+        db.query(DependencyEdge)
+        .filter(DependencyEdge.id == edge_id, DependencyEdge.assessment_id == assessment.id)
+        .one_or_none()
+    )
+    if not edge:
+        raise AssessmentNotFound(edge_id)
+    apply_item_decision(edge, action, notes=notes, reviewer=reviewer)
+    record_decision(db, assessment.id, "edge", edge_key(edge), action, notes=notes, reviewer=reviewer)
+    append_follow_up(
+        assessment,
+        event=f"edge_{action}",
+        detail={"edge_id": edge.id, "edge": edge_key(edge), "notes": notes, "reviewed_by": reviewer},
+    )
+    db.commit()
+    # An edge doesn't change entities or sizing — only the report needs rebuilding.
+    _refresh_after_review(db, assessment.id, retriever, rebuild_entities=False)
+    return edge
+
+
+def review_recommendation(
+    db: Session,
+    assessment: Assessment,
+    recommendation_id: str,
+    action: str,
+    notes: str | None,
+    *,
+    reviewer: str | None = None,
+    retriever: Retriever | None = None,
+) -> InfrastructureRecommendation:
+    _ensure_reviewable(assessment)
+    action = validate_decision_action(action)
+    rec = (
+        db.query(InfrastructureRecommendation)
+        .filter(
+            InfrastructureRecommendation.id == recommendation_id,
+            InfrastructureRecommendation.assessment_id == assessment.id,
+        )
+        .one_or_none()
+    )
+    if not rec:
+        raise AssessmentNotFound(recommendation_id)
+    apply_item_decision(rec, action, notes=notes, reviewer=reviewer)
+    record_decision(
+        db, assessment.id, "recommendation", recommendation_key(rec), action, notes=notes, reviewer=reviewer
+    )
+    append_follow_up(
+        assessment,
+        event=f"recommendation_{action}",
+        detail={
+            "recommendation_id": rec.id,
+            "server_key": rec.server_key,
+            "sku": rec.recommended_sku,
+            "notes": notes,
+            "reviewed_by": reviewer,
+        },
+    )
+    db.commit()
+    _refresh_after_review(db, assessment.id, retriever, rebuild_entities=False)
+    return rec
 
 
 def ask_engagement_question(
@@ -198,9 +412,21 @@ def ask_engagement_question(
     return build_assessment_answers(db, assessment.id, retriever=retriever)
 
 
-def finish_review(db: Session, assessment: Assessment) -> Assessment:
+def finish_review(
+    db: Session, assessment: Assessment, retriever: Retriever | None = None
+) -> Assessment:
     if assessment.status != PipelineStatus.completed:
         raise ValueError("Pipeline must be completed before finishing review")
+    # Cheap gate check first, so an incomplete review doesn't pay for the polished rebuild.
+    if get_settings().enforce_review:
+        queue = review_queue_status(db, assessment.id)
+        if not queue.clear:
+            raise ValueError(
+                f"Review incomplete: {queue.describe()}. Resolve them before marking ready."
+            )
+    # One polished rebuild (LLM sizing explanations + report prose) on sign-off, then
+    # re-check the gate against the rebuilt rows.
+    _refresh_after_review(db, assessment.id, retriever, polish=True)
     complete_review(db, assessment)
     append_follow_up(
         assessment,

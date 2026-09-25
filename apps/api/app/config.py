@@ -252,6 +252,11 @@ class Settings(BaseSettings):
             errors.append("RAG_ENABLED must be true in APP_PROFILE=lz")
         if not self.guardrails_enabled:
             errors.append("GUARDRAILS_ENABLED must be true in APP_PROFILE=lz")
+        if not self.enforce_review:
+            errors.append(
+                "ENFORCE_REVIEW must be true in APP_PROFILE=lz "
+                "(an assessment must not be marked migration-ready with unreviewed items)"
+            )
         if self.database_url.startswith("sqlite"):
             errors.append(
                 "DATABASE_URL must not be SQLite in APP_PROFILE=lz "

@@ -63,6 +63,11 @@ class ReviewStatus(str, enum.Enum):
     accepted = "accepted"
     overridden = "overridden"
     rejected = "rejected"
+    # A conflict candidate that lost because the reviewer accepted/overrode a sibling.
+    superseded = "superseded"
+    # A conflict candidate the reviewer set aside by dismissing the whole conflict
+    # ("none of these values is right — treat the attribute as unknown").
+    dismissed = "dismissed"
 
 
 class ConflictStatus(str, enum.Enum):
@@ -192,6 +197,8 @@ class Claim(Base):
     override_value: Mapped[str | None] = mapped_column(Text, nullable=True)
     review_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_selected: Mapped[bool] = mapped_column(Boolean, default=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    reviewed_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     assessment: Mapped[Assessment] = relationship(back_populates="claims")
 
@@ -263,6 +270,13 @@ class DependencyEdge(Base):
     evidence_quote: Mapped[str | None] = mapped_column(Text, nullable=True)
     needs_human_review: Mapped[bool] = mapped_column(Boolean, default=False)
     rationale: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # Nullable so pre-existing rows (added via `_add_missing_columns`) read as pending.
+    review_status: Mapped[ReviewStatus | None] = mapped_column(
+        _enum(ReviewStatus), nullable=True, default=ReviewStatus.pending
+    )
+    review_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    reviewed_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     assessment: Mapped[Assessment] = relationship(back_populates="edges")
 
@@ -298,8 +312,47 @@ class InfrastructureRecommendation(Base):
     confidence: Mapped[float] = mapped_column(Float, default=0.5)
     needs_human_review: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    review_status: Mapped[ReviewStatus | None] = mapped_column(
+        _enum(ReviewStatus), nullable=True, default=ReviewStatus.pending
+    )
+    review_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    reviewed_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     assessment: Mapped[Assessment] = relationship(back_populates="recommendations")
+
+
+class ReviewDecision(Base):
+    """A reviewer's decision, stored independently of the rows it was made on.
+
+    Claims, conflicts, edges and recommendations are all *derived* data — every pipeline
+    run deletes and re-extracts them. Decisions live here instead (never touched by
+    `clear_derived`) and are re-applied after each run, matched by a stable key:
+
+      claim          entity_type|entity_key|attribute|<unit-normalized value>
+      conflict       entity_type|entity_key|attribute
+      edge           source_type|source_key|rel_type|target_type|target_key
+      recommendation server_key|recommended_sku
+
+    A decision whose key no longer matches (the source evidence changed, or sizing now
+    recommends a different SKU) simply doesn't apply — the new item needs review, which
+    is the correct outcome for changed evidence. This table is also the audit trail.
+    """
+
+    __tablename__ = "review_decisions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    assessment_id: Mapped[str] = mapped_column(ForeignKey("assessments.id"), index=True)
+    target_type: Mapped[str] = mapped_column(String(32))
+    target_key: Mapped[str] = mapped_column(String(1024))
+    action: Mapped[str] = mapped_column(String(32))
+    override_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reviewed_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
 
 
 class EngagementQuestion(Base):

@@ -15,10 +15,20 @@ from app.services.llm_reasoning import get_grounded_prose
 from app.services.pipeline_lock import release, try_acquire
 from app.services.ports import ClaimExtractor, Embedder, Retriever, VectorIndex
 from app.services.questionnaire_extract import sync_uploaded_questions
-from app.services.reconciliation import persist_extraction, persist_inferred_relationships
+from app.services.reconciliation import (
+    persist_extraction,
+    persist_inferred_relationships,
+    rematerialize_entities,
+)
 from app.services.report import generate_report
+from app.services.review import (
+    reapply_claim_decisions,
+    reapply_edge_decisions,
+    reapply_recommendation_decisions,
+)
 from app.services.search import ChunkIndexer
 from app.services.sizing import generate_recommendations
+from app.services.workflow import append_follow_up
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +91,17 @@ class AssessmentPipeline:
         # Start the runtime clock for this run (a re-run resets it).
         assessment.pipeline_started_at = datetime.utcnow()
         assessment.pipeline_finished_at = None
+        # A new run produces new findings, so any earlier "review completed" sign-off no
+        # longer applies; the reviewer re-confirms after decisions are re-applied below.
+        if (assessment.metrics or {}).get("review_completed_at"):
+            append_follow_up(
+                assessment,
+                event="review_reopened",
+                detail={"note": "Pipeline re-ran; review decisions re-applied, sign-off reset"},
+            )
+            metrics = dict(assessment.metrics or {})
+            metrics.pop("review_completed_at", None)
+            assessment.metrics = metrics
         db.commit()
 
         clear_derived(
@@ -105,17 +126,27 @@ class AssessmentPipeline:
         db.commit()
         prose = get_grounded_prose()
         persist_extraction(db, assessment_id, extraction, prose=prose)
+        # Re-apply the reviewer's earlier decisions to the freshly extracted claims (and
+        # conflict dismissals) before anything downstream reads them.
+        reapplied = reapply_claim_decisions(db, assessment_id)
+        if reapplied:
+            rematerialize_entities(db, assessment_id)
+        db.commit()
         sync_uploaded_questions(db, assessment_id)
         plan_dynamic_questions(db, assessment_id)
 
         assessment.status = PipelineStatus.building_graph
         db.commit()
         relationship_meta = persist_inferred_relationships(db, assessment_id)
+        reapplied += reapply_edge_decisions(db, assessment_id)
+        db.commit()
 
         assessment.status = PipelineStatus.generating_report
         assessment.workflow_stage = WorkflowStage.review
         db.commit()
         recommendations = generate_recommendations(db, assessment_id)
+        reapplied += reapply_recommendation_decisions(db, assessment_id)
+        db.commit()
         generate_report(
             db,
             assessment_id,
@@ -151,6 +182,7 @@ class AssessmentPipeline:
                 "manifest_files_parsed": ingested.manifest_files_parsed,
                 "nfr_claim_count": nfr_claim_count,
                 "recommendation_count": len(recommendations),
+                "review_decisions_reapplied": reapplied,
             }
         )
         assessment.pipeline_finished_at = datetime.utcnow()

@@ -99,7 +99,7 @@ def _with_assumptions(profile: dict[str, Any]) -> tuple[dict[str, Any], list[str
     return result, assumptions
 
 
-def _explanation(result: dict[str, Any]) -> tuple[str, str]:
+def _explanation(result: dict[str, Any], *, use_llm: bool = True) -> tuple[str, str]:
     facts = (
         f"{result['server']} requires at least {result['required']['vcpus']} vCPUs, "
         f"{result['required']['memory_gb']} GB RAM and disk meeting "
@@ -110,6 +110,8 @@ def _explanation(result: dict[str, Any]) -> tuple[str, str]:
         f"{facts} {result['recommended_sku']} is the lowest-cost compatible catalog "
         f"candidate and {disk_name} satisfies capacity and performance rules."
     )
+    if not use_llm:
+        return fallback, "deterministic-template"
     from app.services.llm_clients import get_chat_completer
     from app.services.llm_prompts import SIZING_EXPLAIN_SYSTEM
 
@@ -173,7 +175,7 @@ def _blocked_result(
     }
 
 
-def size_profile(profile: dict[str, Any]) -> dict[str, Any]:
+def size_profile(profile: dict[str, Any], *, llm_explanation: bool = True) -> dict[str, Any]:
     settings = get_settings()
     catalog = load_catalog()
     p, assumptions = _with_assumptions(profile)
@@ -324,11 +326,18 @@ def size_profile(profile: dict[str, Any]) -> dict[str, Any]:
         or p["os"] == "unknown"
         or not disk_satisfied,
     }
-    result["explanation"], result["explanation_source"] = _explanation(result)
+    result["explanation"], result["explanation_source"] = _explanation(
+        result, use_llm=llm_explanation
+    )
     return result
 
 
-def generate_recommendations(db: Session, assessment_id: str) -> list[InfrastructureRecommendation]:
+def generate_recommendations(
+    db: Session, assessment_id: str, *, llm_explanations: bool = True
+) -> list[InfrastructureRecommendation]:
+    """(Re)size every server. `llm_explanations=False` uses the deterministic explanation
+    template instead of one LLM call per server — used for the rebuild after each review
+    click; the LLM-written explanations are regenerated when the review is completed."""
     db.query(InfrastructureRecommendation).filter(
         InfrastructureRecommendation.assessment_id == assessment_id
     ).delete(synchronize_session=False)
@@ -336,7 +345,7 @@ def generate_recommendations(db: Session, assessment_id: str) -> list[Infrastruc
     servers = db.query(Server).filter(Server.assessment_id == assessment_id).all()
     for server in servers:
         try:
-            result = size_profile(normalize_workload(server))
+            result = size_profile(normalize_workload(server), llm_explanation=llm_explanations)
         except Exception as exc:
             result = _blocked_result(
                 {

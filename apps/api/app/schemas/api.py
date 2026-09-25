@@ -86,7 +86,19 @@ class EvidenceOut(BaseModel):
     quote: str | None = None
 
 
-class ClaimOut(BaseModel):
+class _ReviewAudit(BaseModel):
+    """Who decided, and when (UTC)."""
+
+    reviewed_at: datetime | None = None
+    reviewed_by: str | None = None
+
+    @field_validator("reviewed_at", mode="after")
+    @classmethod
+    def _utc(cls, value: datetime | None) -> datetime | None:
+        return _as_utc(value)
+
+
+class ClaimOut(_ReviewAudit):
     id: str
     entity_type: str
     entity_key: str
@@ -111,6 +123,45 @@ class ClaimReviewRequest(BaseModel):
     action: str  # accept | override | reject
     override_value: str | None = None
     notes: str | None = None
+    # No auth identity in this app yet; the UI sends the reviewer's name for the audit trail.
+    reviewer: str | None = Field(default=None, max_length=255)
+
+
+class BatchClaimReviewItem(BaseModel):
+    claim_id: str
+    action: str  # accept | override | reject
+    override_value: str | None = None
+    notes: str | None = None
+
+
+class BatchClaimReviewRequest(BaseModel):
+    reviews: list[BatchClaimReviewItem] = Field(min_length=1, max_length=500)
+    reviewer: str | None = Field(default=None, max_length=255)
+
+
+class ReviewDecisionRequest(BaseModel):
+    """Decision on a dependency edge or a sizing recommendation."""
+
+    action: str  # accept | reject
+    notes: str | None = None
+    reviewer: str | None = Field(default=None, max_length=255)
+
+
+class DismissConflictRequest(BaseModel):
+    notes: str | None = None
+    reviewer: str | None = Field(default=None, max_length=255)
+
+
+class ReviewStatusOut(BaseModel):
+    """What still blocks 'Complete review'."""
+
+    pending_claims: int
+    open_conflicts: int
+    pending_edges: int
+    pending_recommendations: int
+    clear: bool
+    summary: str
+    enforce_review: bool
 
 
 class EntityOut(BaseModel):
@@ -173,7 +224,24 @@ class AskQuestionRequest(BaseModel):
     question: str = Field(min_length=1, max_length=500)
 
 
-class InfrastructureRecommendationOut(BaseModel):
+class DependencyEdgeOut(_ReviewAudit):
+    id: str
+    source_type: str
+    source_key: str
+    target_type: str
+    target_key: str
+    rel_type: str
+    confidence: float
+    evidence_quote: str | None = None
+    rationale: str | None = None
+    needs_human_review: bool
+    review_status: str | None = None
+    review_notes: str | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class InfrastructureRecommendationOut(_ReviewAudit):
     id: str
     server_key: str
     provider: str
@@ -182,6 +250,8 @@ class InfrastructureRecommendationOut(BaseModel):
     result: dict[str, Any]
     confidence: float
     needs_human_review: bool
+    review_status: str | None = None
+    review_notes: str | None = None
 
     model_config = {"from_attributes": True}
 
