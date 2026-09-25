@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.models.entities import Chunk
 from app.services.ports import Embedder, Reranker, Retriever, VectorIndex
+from app.services.query_expansion import expand_query
 
 logger = logging.getLogger(__name__)
 
@@ -31,13 +32,23 @@ def chunk_search_text(chunk: Chunk) -> str:
     return f"{context}\n\n{chunk.text}"
 
 
-def reciprocal_rank_fusion(ranked_id_lists: list[list[str]], k: int = 60) -> list[str]:
-    """Fuse several ranked id lists via Reciprocal Rank Fusion, highest score first."""
+def reciprocal_rank_fusion(
+    ranked_id_lists: list[list[str]], k: int = 60, weights: list[float] | None = None
+) -> list[str]:
+    """Fuse several ranked id lists via (optionally weighted) Reciprocal Rank Fusion,
+    highest score first."""
     scores: dict[str, float] = {}
-    for ranked in ranked_id_lists:
+    for i, ranked in enumerate(ranked_id_lists):
+        weight = weights[i] if weights else 1.0
         for rank, item_id in enumerate(ranked):
-            scores[item_id] = scores.get(item_id, 0.0) + 1.0 / (k + rank + 1)
+            scores[item_id] = scores.get(item_id, 0.0) + weight / (k + rank + 1)
     return sorted(scores.keys(), key=lambda item_id: scores[item_id], reverse=True)
+
+
+# RRF weight of a list produced by a query *expansion*, relative to the original query's
+# lists (1.0). Lower, so expansions add recall for abstraction gaps without letting a
+# loosely related expansion push the original query's best hits out of the top-k.
+EXPANSION_WEIGHT = 0.6
 
 
 class ChunkIndexer:
@@ -205,38 +216,45 @@ class MergingRetriever:
             return self._retrieve_waterfall(db, assessment_id, query, k)
 
         candidates = self._fusion_candidates or max(k * 4, 20)
-        query_vector = self._embed_query_cached(query)
+        # [original, *concrete expansions] — see query_expansion for why hybrid search
+        # alone can't bridge "technical debt" -> "PCI re-certification".
+        subqueries = expand_query(query, settings.retrieval_query_expansion)
         by_id: dict[str, Chunk] = {}
         ranked_lists: list[list[str]] = []
+        weights: list[float] = []
 
-        for index in self._indexes:
-            try:
-                hits = index.search(db, assessment_id, query, query_vector, candidates)
-            except Exception:
-                logger.exception("Vector index %s search failed", index.name)
-                continue
+        def add(hits: list[Chunk], weight: float) -> None:
             ids = []
             for chunk in hits:
                 by_id[chunk.id] = chunk
                 ids.append(chunk.id)
             if ids:
                 ranked_lists.append(ids)
+                weights.append(weight)
 
-        try:
-            kw_hits = self._keyword.retrieve(db, assessment_id, query, top_k=candidates)
-        except Exception:
-            logger.exception("Keyword/BM25 retriever failed")
-            kw_hits = []
-        kw_ids = []
-        for chunk in kw_hits:
-            by_id[chunk.id] = chunk
-            kw_ids.append(chunk.id)
-        if kw_ids:
-            ranked_lists.append(kw_ids)
+        # Dense: one vector search per sub-query (embeddings cached per query text).
+        for position, subquery in enumerate(subqueries):
+            weight = 1.0 if position == 0 else EXPANSION_WEIGHT
+            query_vector = self._embed_query_cached(subquery)
+            for index in self._indexes:
+                try:
+                    add(index.search(db, assessment_id, subquery, query_vector, candidates), weight)
+                except Exception:
+                    logger.exception("Vector index %s search failed", index.name)
+
+        # Lexical: BM25 over the original query, and separately over the expansion terms.
+        lexical = [(query, 1.0)]
+        if len(subqueries) > 1:
+            lexical.append((" ".join(subqueries[1:]), EXPANSION_WEIGHT))
+        for text, weight in lexical:
+            try:
+                add(self._keyword.retrieve(db, assessment_id, text, top_k=candidates), weight)
+            except Exception:
+                logger.exception("Keyword/BM25 retriever failed")
 
         if not ranked_lists:
             return []
-        fused = reciprocal_rank_fusion(ranked_lists, k=settings.retrieval_rrf_k)
+        fused = reciprocal_rank_fusion(ranked_lists, k=settings.retrieval_rrf_k, weights=weights)
         return [by_id[cid] for cid in fused[:k]]
 
     def _retrieve_waterfall(

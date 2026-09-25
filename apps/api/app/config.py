@@ -130,6 +130,11 @@ class Settings(BaseSettings):
     vector_score_threshold: float = 0.02
     retrieval_hybrid_enabled: bool = True
     retrieval_rrf_k: int = 60
+    # Expand abstract queries ("technical debt", "blockers") into the concrete wording
+    # documents use ("manual failover", "re-certification", "coupling") before hybrid
+    # search: "off" | "lexicon" (deterministic, default) | "llm" (lexicon + one cached
+    # chat call per distinct query for concepts the lexicon doesn't cover).
+    retrieval_query_expansion: str = "lexicon"
     reranker: str = "off"  # "off" | "cross_encoder" | "llm"
     reranker_candidate_pool: int = 20
     reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
