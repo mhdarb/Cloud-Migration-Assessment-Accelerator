@@ -1,61 +1,62 @@
-hostname,role,os,vcpu,memory_gb,disk_gb,region
-fleet-001,app,Ubuntu 22.04,4,8,220,eastus
-fleet-002,db,Windows Server 2022,6,12,340,westeurope
-fleet-003,cache,RHEL 9,8,16,460,eastus
-fleet-004,worker,Ubuntu 22.04,10,20,580,westeurope
-fleet-005,web,Windows Server 2022,12,24,100,eastus
-fleet-006,app,RHEL 9,14,28,220,westeurope
-fleet-007,db,Ubuntu 22.04,16,32,340,eastus
-fleet-008,cache,Windows Server 2022,2,4,460,westeurope
-fleet-009,worker,RHEL 9,4,8,580,eastus
-fleet-010,web,Ubuntu 22.04,6,12,100,westeurope
-fleet-011,app,Windows Server 2022,8,16,220,eastus
-fleet-012,db,RHEL 9,10,20,340,westeurope
-fleet-013,cache,Ubuntu 22.04,12,24,460,eastus
-fleet-014,worker,Windows Server 2022,14,28,580,westeurope
-fleet-015,web,RHEL 9,16,32,100,eastus
-fleet-016,app,Ubuntu 22.04,2,4,220,westeurope
-fleet-017,db,Windows Server 2022,,8,340,eastus
-fleet-018,cache,RHEL 9,6,12,460,westeurope
-fleet-019,worker,Ubuntu 22.04,8,16,580,eastus
-fleet-020,web,Windows Server 2022,10,20,100,westeurope
-fleet-021,app,RHEL 9,12,24,220,eastus
-fleet-022,db,Ubuntu 22.04,14,28,340,westeurope
-fleet-023,cache,Windows Server 2022,16,32,460,eastus
-fleet-024,worker,RHEL 9,2,4,580,westeurope
-fleet-025,web,Ubuntu 22.04,4,8,100,eastus
-fleet-026,app,Windows Server 2022,6,12,220,westeurope
-fleet-027,db,RHEL 9,8,16,340,eastus
-fleet-028,cache,Ubuntu 22.04,10,20,460,westeurope
-fleet-029,worker,Windows Server 2022,12,24,580,eastus
-fleet-030,web,RHEL 9,14,28,100,westeurope
-fleet-031,app,Ubuntu 22.04,16,32,220,eastus
-fleet-032,db,Windows Server 2022,2,4,340,westeurope
-fleet-033,cache,RHEL 9,4,8,460,eastus
-fleet-034,worker,Ubuntu 22.04,,12,580,westeurope
-fleet-035,web,Windows Server 2022,8,16,100,eastus
-fleet-036,app,RHEL 9,10,20,220,westeurope
-fleet-037,db,Ubuntu 22.04,12,24,340,eastus
-fleet-038,cache,Windows Server 2022,14,28,460,westeurope
-fleet-039,worker,RHEL 9,16,32,580,eastus
-fleet-040,web,Ubuntu 22.04,2,4,100,westeurope
-fleet-041,app,Windows Server 2022,4,8,220,eastus
-fleet-042,db,RHEL 9,6,12,340,westeurope
-fleet-043,cache,Ubuntu 22.04,8,16,460,eastus
-fleet-044,worker,Windows Server 2022,10,20,580,westeurope
-fleet-045,web,RHEL 9,12,24,100,eastus
-fleet-046,app,Ubuntu 22.04,14,28,220,westeurope
-fleet-047,db,Windows Server 2022,16,32,340,eastus
-fleet-048,cache,RHEL 9,2,4,460,westeurope
-fleet-049,worker,Ubuntu 22.04,4,8,580,eastus
-fleet-050,web,Windows Server 2022,6,12,100,westeurope
-fleet-051,app,RHEL 9,,16,220,eastus
-fleet-052,db,Ubuntu 22.04,10,20,340,westeurope
-fleet-053,cache,Windows Server 2022,12,24,460,eastus
-fleet-054,worker,RHEL 9,14,28,580,westeurope
-fleet-055,web,Ubuntu 22.04,16,32,100,eastus
-fleet-056,app,Windows Server 2022,2,4,220,westeurope
-fleet-057,db,RHEL 9,4,8,340,eastus
-fleet-058,cache,Ubuntu 22.04,6,12,460,westeurope
-fleet-059,worker,Windows Server 2022,8,16,580,eastus
-fleet-060,web,RHEL 9,10,20,100,westeurope
+hostname,role,os,vcpu,memory_gb,disk_gb,datacenter
+flt-wrk-001,geofence,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-002,eta-calc,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-003,notify,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-004,cache,Ubuntu 22.04,4,16,120,DC-South
+flt-wrk-005,gps-decoder,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-006,geofence,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-007,eta-calc,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-008,notify,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-009,cache,Ubuntu 22.04,4,16,120,DC-South
+flt-wrk-010,gps-decoder,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-011,geofence,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-012,eta-calc,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-013,notify,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-014,cache,Ubuntu 22.04,4,16,120,DC-South
+flt-wrk-015,gps-decoder,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-016,geofence,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-017,eta-calc,Ubuntu 22.04,,8,60,DC-South
+flt-wrk-018,notify,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-019,cache,Ubuntu 22.04,4,16,120,DC-South
+flt-wrk-020,gps-decoder,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-021,geofence,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-022,eta-calc,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-023,notify,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-024,cache,Ubuntu 22.04,4,16,120,DC-South
+flt-wrk-025,gps-decoder,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-026,geofence,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-027,eta-calc,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-028,notify,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-029,cache,Ubuntu 22.04,4,16,120,DC-South
+flt-wrk-030,gps-decoder,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-031,geofence,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-032,eta-calc,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-033,notify,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-034,cache,Ubuntu 22.04,,16,120,DC-South
+flt-wrk-035,gps-decoder,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-036,geofence,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-037,eta-calc,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-038,notify,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-039,cache,Ubuntu 22.04,4,16,120,DC-South
+flt-wrk-040,gps-decoder,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-041,geofence,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-042,eta-calc,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-043,notify,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-044,cache,Ubuntu 22.04,4,16,120,DC-South
+flt-wrk-045,gps-decoder,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-046,geofence,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-047,eta-calc,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-048,notify,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-049,cache,Ubuntu 22.04,4,16,120,DC-South
+flt-wrk-050,gps-decoder,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-051,geofence,Ubuntu 22.04,,8,60,DC-South
+flt-wrk-052,eta-calc,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-053,notify,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-054,cache,Ubuntu 22.04,4,16,120,DC-South
+flt-wrk-055,gps-decoder,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-056,geofence,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-057,eta-calc,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-058,notify,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-059,cache,Ubuntu 22.04,4,16,120,DC-South
+flt-wrk-060,gps-decoder,Ubuntu 22.04,2,8,60,DC-South
+flt-wrk-023,geofence,Ubuntu 22.04,2,12,60,DC-South

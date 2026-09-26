@@ -1,0 +1,33 @@
+From: Tom Becker <tom.becker@zephyr-logistics.example>
+Sent: Monday, 14 September 2026 09:12
+To: Migration Partner PMO <pmo@partner.example>
+Cc: Priya Nair <priya.nair@zephyr-logistics.example>
+Subject: RE: FW: Payments migration timing
+
+Hi all,
+
+Confirming from the Payments side: nothing in PCI scope can change between 1 Feb and
+5 Mar 2027 (QSA audit + freeze). Realistically Payments cannot move before April 2027.
+
+Also - pay-db-01 has to go to PostgreSQL 16 first; we are not lifting PG 11 into Azure.
+
+Thanks,
+Tom
+
+--
+Tom Becker | Head of Payments Platforms | Zephyr Logistics
+M: +44 7700 900123 | tom.becker@zephyr-logistics.example
+This e-mail and any attachments are confidential and intended solely for the addressee.
+If you have received it in error please notify the sender and delete it.
+
+-----Original Message-----
+From: Migration Partner PMO <pmo@partner.example>
+Sent: Friday, 11 September 2026 16:40
+Subject: FW: Payments migration timing
+
+> Can Payments move in the November wave with the Order API? The draft plan assumes
+> Order API and Payments cut over together because INT-01 is synchronous.
+>
+> > From: Priya Nair
+> > Order API can move without Payments if we keep a site-to-site VPN back to DC-North
+> > for the payment calls. Latency budget is tight (p95 < 200 ms end to end).

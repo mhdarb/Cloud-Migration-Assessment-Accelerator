@@ -1,0 +1,1263 @@
+{
+  "estate": "Zephyr Logistics",
+  "as_of": "2026-09-26",
+  "servers": {
+    "active": [
+      "ord-api-01",
+      "ord-api-02",
+      "ord-api-03",
+      "ord-api-dev-01",
+      "pay-svc-01",
+      "pay-db-01",
+      "idp-01",
+      "idp-02",
+      "fleet-ing-01",
+      "fleet-ing-02",
+      "fleet-ing-stg-01",
+      "kafka-01",
+      "kafka-02",
+      "kafka-03",
+      "fleet-db-01",
+      "fleet-db-02",
+      "rpt-01",
+      "zl-as400",
+      "edge-lb-01",
+      "edge-lb-02",
+      "dc-01",
+      "dc-02",
+      "jump-01",
+      "mon-01",
+      "file-01"
+    ],
+    "retired": [
+      "ord-api-legacy",
+      "pay-svc-00"
+    ],
+    "fleet_worker_pool": {
+      "hosts": [
+        "flt-wrk-001",
+        "flt-wrk-002",
+        "flt-wrk-003",
+        "flt-wrk-004",
+        "flt-wrk-005",
+        "flt-wrk-006",
+        "flt-wrk-007",
+        "flt-wrk-008",
+        "flt-wrk-009",
+        "flt-wrk-010",
+        "flt-wrk-011",
+        "flt-wrk-012",
+        "flt-wrk-013",
+        "flt-wrk-014",
+        "flt-wrk-015",
+        "flt-wrk-016",
+        "flt-wrk-017",
+        "flt-wrk-018",
+        "flt-wrk-019",
+        "flt-wrk-020",
+        "flt-wrk-021",
+        "flt-wrk-022",
+        "flt-wrk-023",
+        "flt-wrk-024",
+        "flt-wrk-025",
+        "flt-wrk-026",
+        "flt-wrk-027",
+        "flt-wrk-028",
+        "flt-wrk-029",
+        "flt-wrk-030",
+        "flt-wrk-031",
+        "flt-wrk-032",
+        "flt-wrk-033",
+        "flt-wrk-034",
+        "flt-wrk-035",
+        "flt-wrk-036",
+        "flt-wrk-037",
+        "flt-wrk-038",
+        "flt-wrk-039",
+        "flt-wrk-040",
+        "flt-wrk-041",
+        "flt-wrk-042",
+        "flt-wrk-043",
+        "flt-wrk-044",
+        "flt-wrk-045",
+        "flt-wrk-046",
+        "flt-wrk-047",
+        "flt-wrk-048",
+        "flt-wrk-049",
+        "flt-wrk-050",
+        "flt-wrk-051",
+        "flt-wrk-052",
+        "flt-wrk-053",
+        "flt-wrk-054",
+        "flt-wrk-055",
+        "flt-wrk-056",
+        "flt-wrk-057",
+        "flt-wrk-058",
+        "flt-wrk-059",
+        "flt-wrk-060"
+      ],
+      "count": 60
+    },
+    "aws": [
+      "aws-etl-01",
+      "aws-etl-02"
+    ],
+    "not_migration_targets": [
+      "esx-n-01",
+      "esx-n-02",
+      "esx-s-01",
+      "esx-s-02",
+      "tpl-rhel9-2026",
+      "restore-test-0412"
+    ],
+    "must_never_appear": [
+      "TOTAL",
+      "Outbound",
+      "Inbound",
+      "Internal",
+      "INT-01",
+      "In Service",
+      "express",
+      "Total annual run cost"
+    ]
+  },
+  "hosts": [
+    {
+      "name": "ord-api-01",
+      "app": "order-api",
+      "role": "api",
+      "env": "prod",
+      "dc": "DC-North",
+      "os": "RHEL 9",
+      "vcpu": 16,
+      "memory_gb": 32,
+      "disk_gb": 200,
+      "status": "active",
+      "kind": "vm",
+      "p95_cpu": 58.4,
+      "p95_mem": 71.2,
+      "p95_iops": 900,
+      "migratable": true,
+      "note": "Resized 8 -> 16 vCPU in July 2026; CMDB and architecture brief still say 8.",
+      "fqdn": "ord-api-01.dcn.zephyr.local"
+    },
+    {
+      "name": "ord-api-02",
+      "app": "order-api",
+      "role": "api",
+      "env": "prod",
+      "dc": "DC-North",
+      "os": "RHEL 9",
+      "vcpu": 8,
+      "memory_gb": 32,
+      "disk_gb": 200,
+      "status": "active",
+      "kind": "vm",
+      "p95_cpu": 71.0,
+      "p95_mem": 69.5,
+      "p95_iops": 850,
+      "migratable": true,
+      "note": "",
+      "fqdn": "ord-api-02.dcn.zephyr.local"
+    },
+    {
+      "name": "ord-api-03",
+      "app": "order-api",
+      "role": "api-standby",
+      "env": "prod",
+      "dc": "DC-South",
+      "os": "RHEL 9",
+      "vcpu": 8,
+      "memory_gb": 32,
+      "disk_gb": 200,
+      "status": "active",
+      "kind": "vm",
+      "p95_cpu": 6.1,
+      "p95_mem": 22.0,
+      "p95_iops": 40,
+      "migratable": true,
+      "note": "Warm standby; near-idle (right-sizing candidate).",
+      "fqdn": "ord-api-03.dcs.zephyr.local"
+    },
+    {
+      "name": "ord-api-dev-01",
+      "app": "order-api",
+      "role": "api",
+      "env": "dev",
+      "dc": "DC-North",
+      "os": "RHEL 9",
+      "vcpu": 2,
+      "memory_gb": 8,
+      "disk_gb": 80,
+      "status": "active",
+      "kind": "vm",
+      "p95_cpu": 9.0,
+      "p95_mem": 40.0,
+      "p95_iops": 30,
+      "migratable": true,
+      "note": "",
+      "fqdn": "ord-api-dev-01.dcn.zephyr.local"
+    },
+    {
+      "name": "ord-api-legacy",
+      "app": "order-api",
+      "role": "api",
+      "env": "prod",
+      "dc": "DC-North",
+      "os": "RHEL 7",
+      "vcpu": 4,
+      "memory_gb": 16,
+      "disk_gb": 200,
+      "status": "retired",
+      "kind": "vm",
+      "p95_cpu": null,
+      "p95_mem": null,
+      "p95_iops": null,
+      "migratable": true,
+      "note": "Decommissioned 2025-02; still in the CMDB, powered off in vCenter.",
+      "fqdn": "ord-api-legacy.dcn.zephyr.local"
+    },
+    {
+      "name": "pay-svc-01",
+      "app": "payments",
+      "role": "app",
+      "env": "prod",
+      "dc": "DC-North",
+      "os": "Windows Server 2022",
+      "vcpu": 4,
+      "memory_gb": 16,
+      "disk_gb": 120,
+      "status": "active",
+      "kind": "vm",
+      "p95_cpu": 55.0,
+      "p95_mem": 62.3,
+      "p95_iops": 400,
+      "migratable": true,
+      "note": "Rebuilt from Windows Server 2016 during the 2025 patch cycle.",
+      "fqdn": "pay-svc-01.dcn.zephyr.local"
+    },
+    {
+      "name": "pay-db-01",
+      "app": "payments",
+      "role": "db",
+      "env": "prod",
+      "dc": "DC-North",
+      "os": "RHEL 7",
+      "vcpu": 8,
+      "memory_gb": 64,
+      "disk_gb": 2048,
+      "status": "active",
+      "kind": "physical",
+      "p95_cpu": 44.0,
+      "p95_mem": 88.1,
+      "p95_iops": 5200,
+      "migratable": true,
+      "note": "Physical; PostgreSQL 11 (EOL 2023-11) on RHEL 7 (ELS only). Invisible to RVTools.",
+      "fqdn": "pay-db-01.dcn.zephyr.local"
+    },
+    {
+      "name": "pay-svc-00",
+      "app": "payments",
+      "role": "app",
+      "env": "prod",
+      "dc": "DC-North",
+      "os": "Windows Server 2012",
+      "vcpu": 4,
+      "memory_gb": 8,
+      "disk_gb": 100,
+      "status": "retired",
+      "kind": "vm",
+      "p95_cpu": null,
+      "p95_mem": null,
+      "p95_iops": null,
+      "migratable": true,
+      "note": "Retired 2024; appears only in the CMDB.",
+      "fqdn": "pay-svc-00.dcn.zephyr.local"
+    },
+    {
+      "name": "idp-01",
+      "app": "identity",
+      "role": "app",
+      "env": "prod",
+      "dc": "DC-North",
+      "os": "Ubuntu 22.04",
+      "vcpu": 4,
+      "memory_gb": 8,
+      "disk_gb": 80,
+      "status": "active",
+      "kind": "vm",
+      "p95_cpu": 23.0,
+      "p95_mem": 41.0,
+      "p95_iops": 150,
+      "migratable": true,
+      "note": "",
+      "fqdn": "idp-01.dcn.zephyr.local"
+    },
+    {
+      "name": "idp-02",
+      "app": "identity",
+      "role": "app",
+      "env": "prod",
+      "dc": "DC-South",
+      "os": "Ubuntu 22.04",
+      "vcpu": 4,
+      "memory_gb": 8,
+      "disk_gb": 80,
+      "status": "active",
+      "kind": "vm",
+      "p95_cpu": 19.0,
+      "p95_mem": 38.0,
+      "p95_iops": 140,
+      "migratable": true,
+      "note": "",
+      "fqdn": "idp-02.dcs.zephyr.local"
+    },
+    {
+      "name": "fleet-ing-01",
+      "app": "fleet-tracker",
+      "role": "ingest",
+      "env": "prod",
+      "dc": "DC-South",
+      "os": "Ubuntu 22.04",
+      "vcpu": 8,
+      "memory_gb": 16,
+      "disk_gb": 100,
+      "status": "active",
+      "kind": "vm",
+      "p95_cpu": 76.0,
+      "p95_mem": 54.0,
+      "p95_iops": 600,
+      "migratable": true,
+      "note": "",
+      "fqdn": "fleet-ing-01.dcs.zephyr.local"
+    },
+    {
+      "name": "fleet-ing-02",
+      "app": "fleet-tracker",
+      "role": "ingest",
+      "env": "prod",
+      "dc": "DC-South",
+      "os": "Ubuntu 22.04",
+      "vcpu": 8,
+      "memory_gb": 16,
+      "disk_gb": 100,
+      "status": "active",
+      "kind": "vm",
+      "p95_cpu": 74.2,
+      "p95_mem": 52.0,
+      "p95_iops": 610,
+      "migratable": true,
+      "note": "",
+      "fqdn": "fleet-ing-02.dcs.zephyr.local"
+    },
+    {
+      "name": "fleet-ing-stg-01",
+      "app": "fleet-tracker",
+      "role": "ingest",
+      "env": "staging",
+      "dc": "DC-South",
+      "os": "Ubuntu 22.04",
+      "vcpu": 4,
+      "memory_gb": 8,
+      "disk_gb": 80,
+      "status": "active",
+      "kind": "vm",
+      "p95_cpu": 12.0,
+      "p95_mem": 30.0,
+      "p95_iops": 60,
+      "migratable": true,
+      "note": "",
+      "fqdn": "fleet-ing-stg-01.dcs.zephyr.local"
+    },
+    {
+      "name": "kafka-01",
+      "app": "fleet-tracker",
+      "role": "broker",
+      "env": "prod",
+      "dc": "DC-South",
+      "os": "RHEL 8",
+      "vcpu": 8,
+      "memory_gb": 32,
+      "disk_gb": 1024,
+      "status": "active",
+      "kind": "vm",
+      "p95_cpu": 48.0,
+      "p95_mem": 66.0,
+      "p95_iops": 2400,
+      "migratable": true,
+      "note": "",
+      "fqdn": "kafka-01.dcs.zephyr.local"
+    },
+    {
+      "name": "kafka-02",
+      "app": "fleet-tracker",
+      "role": "broker",
+      "env": "prod",
+      "dc": "DC-South",
+      "os": "RHEL 8",
+      "vcpu": 8,
+      "memory_gb": 32,
+      "disk_gb": 1024,
+      "status": "active",
+      "kind": "vm",
+      "p95_cpu": 47.5,
+      "p95_mem": 65.1,
+      "p95_iops": 2350,
+      "migratable": true,
+      "note": "",
+      "fqdn": "kafka-02.dcs.zephyr.local"
+    },
+    {
+      "name": "kafka-03",
+      "app": "fleet-tracker",
+      "role": "broker",
+      "env": "prod",
+      "dc": "DC-South",
+      "os": "RHEL 8",
+      "vcpu": 8,
+      "memory_gb": 32,
+      "disk_gb": 1024,
+      "status": "active",
+      "kind": "vm",
+      "p95_cpu": 49.3,
+      "p95_mem": 67.4,
+      "p95_iops": 2420,
+      "migratable": true,
+      "note": "",
+      "fqdn": "kafka-03.dcs.zephyr.local"
+    },
+    {
+      "name": "fleet-db-01",
+      "app": "fleet-tracker",
+      "role": "db",
+      "env": "prod",
+      "dc": "DC-South",
+      "os": "Ubuntu 22.04",
+      "vcpu": 16,
+      "memory_gb": 64,
+      "disk_gb": 1024,
+      "status": "active",
+      "kind": "vm",
+      "p95_cpu": 62.0,
+      "p95_mem": 81.0,
+      "p95_iops": 4100,
+      "migratable": true,
+      "note": "",
+      "fqdn": "fleet-db-01.dcs.zephyr.local"
+    },
+    {
+      "name": "fleet-db-02",
+      "app": "fleet-tracker",
+      "role": "db-replica",
+      "env": "prod",
+      "dc": "DC-South",
+      "os": "Ubuntu 22.04",
+      "vcpu": 16,
+      "memory_gb": 64,
+      "disk_gb": 1024,
+      "status": "active",
+      "kind": "vm",
+      "p95_cpu": 21.0,
+      "p95_mem": 77.0,
+      "p95_iops": 3900,
+      "migratable": true,
+      "note": "",
+      "fqdn": "fleet-db-02.dcs.zephyr.local"
+    },
+    {
+      "name": "rpt-01",
+      "app": "reporting",
+      "role": "app+db",
+      "env": "prod",
+      "dc": "DC-North",
+      "os": "Windows Server 2012 R2",
+      "vcpu": 4,
+      "memory_gb": 16,
+      "disk_gb": 500,
+      "status": "active",
+      "kind": "vm",
+      "p95_cpu": 12.0,
+      "p95_mem": 45.0,
+      "p95_iops": 300,
+      "migratable": true,
+      "note": "SQL Server 2014 Standard (FinanceDW). Reads the Payments DB directly \u2014 undocumented.",
+      "fqdn": "rpt-01.dcn.zephyr.local"
+    },
+    {
+      "name": "zl-as400",
+      "app": "wms",
+      "role": "wms",
+      "env": "prod",
+      "dc": "DC-North",
+      "os": "IBM i 7.4",
+      "vcpu": null,
+      "memory_gb": null,
+      "disk_gb": null,
+      "status": "active",
+      "kind": "physical",
+      "p95_cpu": null,
+      "p95_mem": null,
+      "p95_iops": null,
+      "migratable": false,
+      "note": "IBM Power / IBM i. Not an Azure VM target (rehost via partner or retain).",
+      "fqdn": "zl-as400.dcn.zephyr.local"
+    },
+    {
+      "name": "edge-lb-01",
+      "app": "shared",
+      "role": "load-balancer",
+      "env": "prod",
+      "dc": "DC-North",
+      "os": "F5 BIG-IP TMOS 15.1",
+      "vcpu": null,
+      "memory_gb": null,
+      "disk_gb": null,
+      "status": "active",
+      "kind": "appliance",
+      "p95_cpu": null,
+      "p95_mem": null,
+      "p95_iops": null,
+      "migratable": false,
+      "note": "Hardware appliance; replace with Application Gateway / Front Door.",
+      "fqdn": "edge-lb-01.dcn.zephyr.local"
+    },
+    {
+      "name": "edge-lb-02",
+      "app": "shared",
+      "role": "load-balancer",
+      "env": "prod",
+      "dc": "DC-North",
+      "os": "F5 BIG-IP TMOS 15.1",
+      "vcpu": null,
+      "memory_gb": null,
+      "disk_gb": null,
+      "status": "active",
+      "kind": "appliance",
+      "p95_cpu": null,
+      "p95_mem": null,
+      "p95_iops": null,
+      "migratable": false,
+      "note": "",
+      "fqdn": "edge-lb-02.dcn.zephyr.local"
+    },
+    {
+      "name": "dc-01",
+      "app": "shared",
+      "role": "domain-controller",
+      "env": "prod",
+      "dc": "DC-North",
+      "os": "Windows Server 2019",
+      "vcpu": 2,
+      "memory_gb": 8,
+      "disk_gb": 80,
+      "status": "active",
+      "kind": "vm",
+      "p95_cpu": 8.0,
+      "p95_mem": 35.0,
+      "p95_iops": 60,
+      "migratable": true,
+      "note": "",
+      "fqdn": "dc-01.dcn.zephyr.local"
+    },
+    {
+      "name": "dc-02",
+      "app": "shared",
+      "role": "domain-controller",
+      "env": "prod",
+      "dc": "DC-South",
+      "os": "Windows Server 2019",
+      "vcpu": 2,
+      "memory_gb": 8,
+      "disk_gb": 80,
+      "status": "active",
+      "kind": "vm",
+      "p95_cpu": 7.5,
+      "p95_mem": 33.0,
+      "p95_iops": 55,
+      "migratable": true,
+      "note": "",
+      "fqdn": "dc-02.dcs.zephyr.local"
+    },
+    {
+      "name": "jump-01",
+      "app": "shared",
+      "role": "bastion",
+      "env": "prod",
+      "dc": "DC-North",
+      "os": "Windows Server 2019",
+      "vcpu": 2,
+      "memory_gb": 4,
+      "disk_gb": 60,
+      "status": "active",
+      "kind": "vm",
+      "p95_cpu": null,
+      "p95_mem": null,
+      "p95_iops": null,
+      "migratable": true,
+      "note": "",
+      "fqdn": "jump-01.dcn.zephyr.local"
+    },
+    {
+      "name": "mon-01",
+      "app": "shared",
+      "role": "monitoring",
+      "env": "prod",
+      "dc": "DC-North",
+      "os": "CentOS 7",
+      "vcpu": 4,
+      "memory_gb": 16,
+      "disk_gb": 500,
+      "status": "active",
+      "kind": "vm",
+      "p95_cpu": 35.0,
+      "p95_mem": 60.0,
+      "p95_iops": 700,
+      "migratable": true,
+      "note": "Zabbix server; CentOS 7 is end-of-life (2024-06).",
+      "fqdn": "mon-01.dcn.zephyr.local"
+    },
+    {
+      "name": "file-01",
+      "app": "shared",
+      "role": "file-server",
+      "env": "prod",
+      "dc": "DC-North",
+      "os": "Windows Server 2016",
+      "vcpu": 4,
+      "memory_gb": 16,
+      "disk_gb": 4096,
+      "status": "active",
+      "kind": "vm",
+      "p95_cpu": 10.0,
+      "p95_mem": 30.0,
+      "p95_iops": 900,
+      "migratable": true,
+      "note": "",
+      "fqdn": "file-01.dcn.zephyr.local"
+    }
+  ],
+  "applications": {
+    "order-api": "Order API (zephyr-order-api)",
+    "payments": "Payments Service",
+    "identity": "Identity Provider",
+    "fleet-tracker": "Fleet Tracker (fleet-ingestor)",
+    "reporting": "Finance Reporting",
+    "wms": "Warehouse Management System (IBM i)"
+  },
+  "databases": {
+    "paymentsdb": "PostgreSQL 11 on pay-db-01 (EOL)",
+    "fleetdb": "PostgreSQL 14 on fleet-db-01/02",
+    "financedw": "SQL Server 2014 Standard on rpt-01 (end of support 2024-07-09)"
+  },
+  "dependencies": [
+    {
+      "source": "ord-api-01",
+      "target": "pay-svc-01",
+      "port": 443
+    },
+    {
+      "source": "ord-api-02",
+      "target": "pay-svc-01",
+      "port": 443
+    },
+    {
+      "source": "ord-api-01",
+      "target": "idp-01",
+      "port": 443
+    },
+    {
+      "source": "ord-api-02",
+      "target": "idp-01",
+      "port": 443
+    },
+    {
+      "source": "ord-api-01",
+      "target": "kafka-01",
+      "port": 9092
+    },
+    {
+      "source": "ord-api-02",
+      "target": "kafka-02",
+      "port": 9092
+    },
+    {
+      "source": "pay-svc-01",
+      "target": "pay-db-01",
+      "port": 5432
+    },
+    {
+      "source": "fleet-ing-01",
+      "target": "kafka-01",
+      "port": 9092
+    },
+    {
+      "source": "fleet-ing-02",
+      "target": "kafka-03",
+      "port": 9092
+    },
+    {
+      "source": "fleet-ing-01",
+      "target": "fleet-db-01",
+      "port": 5432
+    },
+    {
+      "source": "fleet-ing-02",
+      "target": "fleet-db-01",
+      "port": 5432
+    },
+    {
+      "source": "fleet-db-01",
+      "target": "fleet-db-02",
+      "port": 5432
+    },
+    {
+      "source": "rpt-01",
+      "target": "pay-db-01",
+      "port": 5432
+    },
+    {
+      "source": "rpt-01",
+      "target": "unknown (10.20.5.77)",
+      "port": 1521
+    }
+  ],
+  "sizing": [
+    {
+      "server": "ord-api-01",
+      "vcpus": 16,
+      "memory_gb": 32,
+      "os": "RHEL 9",
+      "migratable": true,
+      "kind": "vm",
+      "expected_decision": "recommended"
+    },
+    {
+      "server": "ord-api-02",
+      "vcpus": 8,
+      "memory_gb": 32,
+      "os": "RHEL 9",
+      "migratable": true,
+      "kind": "vm",
+      "expected_decision": "recommended"
+    },
+    {
+      "server": "ord-api-03",
+      "vcpus": 8,
+      "memory_gb": 32,
+      "os": "RHEL 9",
+      "migratable": true,
+      "kind": "vm",
+      "expected_decision": "recommended"
+    },
+    {
+      "server": "ord-api-dev-01",
+      "vcpus": 2,
+      "memory_gb": 8,
+      "os": "RHEL 9",
+      "migratable": true,
+      "kind": "vm",
+      "expected_decision": "recommended"
+    },
+    {
+      "server": "pay-svc-01",
+      "vcpus": 4,
+      "memory_gb": 16,
+      "os": "Windows Server 2022",
+      "migratable": true,
+      "kind": "vm",
+      "expected_decision": "recommended"
+    },
+    {
+      "server": "pay-db-01",
+      "vcpus": 8,
+      "memory_gb": 64,
+      "os": "RHEL 7",
+      "migratable": true,
+      "kind": "physical",
+      "expected_decision": "recommended"
+    },
+    {
+      "server": "idp-01",
+      "vcpus": 4,
+      "memory_gb": 8,
+      "os": "Ubuntu 22.04",
+      "migratable": true,
+      "kind": "vm",
+      "expected_decision": "recommended"
+    },
+    {
+      "server": "idp-02",
+      "vcpus": 4,
+      "memory_gb": 8,
+      "os": "Ubuntu 22.04",
+      "migratable": true,
+      "kind": "vm",
+      "expected_decision": "recommended"
+    },
+    {
+      "server": "fleet-ing-01",
+      "vcpus": 8,
+      "memory_gb": 16,
+      "os": "Ubuntu 22.04",
+      "migratable": true,
+      "kind": "vm",
+      "expected_decision": "recommended"
+    },
+    {
+      "server": "fleet-ing-02",
+      "vcpus": 8,
+      "memory_gb": 16,
+      "os": "Ubuntu 22.04",
+      "migratable": true,
+      "kind": "vm",
+      "expected_decision": "recommended"
+    },
+    {
+      "server": "fleet-ing-stg-01",
+      "vcpus": 4,
+      "memory_gb": 8,
+      "os": "Ubuntu 22.04",
+      "migratable": true,
+      "kind": "vm",
+      "expected_decision": "recommended"
+    },
+    {
+      "server": "kafka-01",
+      "vcpus": 8,
+      "memory_gb": 32,
+      "os": "RHEL 8",
+      "migratable": true,
+      "kind": "vm",
+      "expected_decision": "recommended"
+    },
+    {
+      "server": "kafka-02",
+      "vcpus": 8,
+      "memory_gb": 32,
+      "os": "RHEL 8",
+      "migratable": true,
+      "kind": "vm",
+      "expected_decision": "recommended"
+    },
+    {
+      "server": "kafka-03",
+      "vcpus": 8,
+      "memory_gb": 32,
+      "os": "RHEL 8",
+      "migratable": true,
+      "kind": "vm",
+      "expected_decision": "recommended"
+    },
+    {
+      "server": "fleet-db-01",
+      "vcpus": 16,
+      "memory_gb": 64,
+      "os": "Ubuntu 22.04",
+      "migratable": true,
+      "kind": "vm",
+      "expected_decision": "recommended"
+    },
+    {
+      "server": "fleet-db-02",
+      "vcpus": 16,
+      "memory_gb": 64,
+      "os": "Ubuntu 22.04",
+      "migratable": true,
+      "kind": "vm",
+      "expected_decision": "recommended"
+    },
+    {
+      "server": "rpt-01",
+      "vcpus": 4,
+      "memory_gb": 16,
+      "os": "Windows Server 2012 R2",
+      "migratable": true,
+      "kind": "vm",
+      "expected_decision": "recommended"
+    },
+    {
+      "server": "zl-as400",
+      "vcpus": null,
+      "memory_gb": null,
+      "os": "IBM i 7.4",
+      "migratable": false,
+      "kind": "physical",
+      "expected_decision": "blocked"
+    },
+    {
+      "server": "edge-lb-01",
+      "vcpus": null,
+      "memory_gb": null,
+      "os": "F5 BIG-IP TMOS 15.1",
+      "migratable": false,
+      "kind": "appliance",
+      "expected_decision": "blocked"
+    },
+    {
+      "server": "edge-lb-02",
+      "vcpus": null,
+      "memory_gb": null,
+      "os": "F5 BIG-IP TMOS 15.1",
+      "migratable": false,
+      "kind": "appliance",
+      "expected_decision": "blocked"
+    },
+    {
+      "server": "dc-01",
+      "vcpus": 2,
+      "memory_gb": 8,
+      "os": "Windows Server 2019",
+      "migratable": true,
+      "kind": "vm",
+      "expected_decision": "recommended"
+    },
+    {
+      "server": "dc-02",
+      "vcpus": 2,
+      "memory_gb": 8,
+      "os": "Windows Server 2019",
+      "migratable": true,
+      "kind": "vm",
+      "expected_decision": "recommended"
+    },
+    {
+      "server": "jump-01",
+      "vcpus": 2,
+      "memory_gb": 4,
+      "os": "Windows Server 2019",
+      "migratable": true,
+      "kind": "vm",
+      "expected_decision": "recommended"
+    },
+    {
+      "server": "mon-01",
+      "vcpus": 4,
+      "memory_gb": 16,
+      "os": "CentOS 7",
+      "migratable": true,
+      "kind": "vm",
+      "expected_decision": "recommended"
+    },
+    {
+      "server": "file-01",
+      "vcpus": 4,
+      "memory_gb": 16,
+      "os": "Windows Server 2016",
+      "migratable": true,
+      "kind": "vm",
+      "expected_decision": "recommended"
+    }
+  ],
+  "conflicts": [
+    {
+      "entity": "server:ord-api-01",
+      "attribute": "vcpus",
+      "values": [
+        8,
+        16
+      ],
+      "truth": 16,
+      "why": "CMDB (2025-11), architecture brief (2025-10) and discovery snapshot (2025-06) are stale; RVTools (2026-09) and workshop notes (2026-09-10) are current."
+    },
+    {
+      "entity": "application:order-api",
+      "attribute": "rto",
+      "values": [
+        "2 hours",
+        "4 hours"
+      ],
+      "truth": "2 hours",
+      "why": "NFR pack (2026-05) supersedes DR plan approved 2023."
+    },
+    {
+      "entity": "server:pay-svc-01",
+      "attribute": "os",
+      "values": [
+        "Windows Server 2016",
+        "Windows Server 2022"
+      ],
+      "truth": "Windows Server 2022",
+      "why": "Rebuilt in the 2025 patch cycle."
+    },
+    {
+      "entity": "server:flt-wrk-023",
+      "attribute": "memory_gb",
+      "values": [
+        8,
+        12
+      ],
+      "truth": "unknown",
+      "why": "Duplicate export row; needs a human decision."
+    }
+  ],
+  "blockers": [
+    "Payments cannot move before April 2027 (PCI QSA audit + change freeze 2027-02-01..2027-03-05).",
+    "pay-db-01: PostgreSQL 11 is end-of-life; upgrade to 16 before/with migration.",
+    "rpt-01: Windows Server 2012 R2 + SQL Server 2014 are out of support; reads Payments DB directly.",
+    "zl-as400 (IBM i) is not an Azure VM target; retained on-prem for wave 1.",
+    "edge-lb-01/02 are F5 appliances: replace with Application Gateway / Front Door, don't rehost.",
+    "mon-01: CentOS 7 end-of-life.",
+    "Unknown Oracle listener 10.20.5.77:1521 used by rpt-01.",
+    "Order API standby (ord-api-03) is undersized for failover."
+  ],
+  "traps": [
+    {
+      "file": "architecture-brief.pdf",
+      "kind": "stale-source",
+      "detail": "ord-api-01 listed at 8 vCPU (brief last reviewed 2025-10).",
+      "expected_handling": "Truth is 16 vCPU (RVTools 2026-09, workshop notes). Expect a vCPU conflict for review."
+    },
+    {
+      "file": "rack-layout.pdf",
+      "kind": "physical-only",
+      "detail": "Lists the physical boxes (pay-db-01, zl-as400, edge-lb-01/02) and ESXi hosts esx-n-01/02.",
+      "expected_handling": "pay-db-01 is a real migration target missing from RVTools; ESXi hosts are NOT migration targets."
+    },
+    {
+      "file": "scanned-runbook.pdf",
+      "kind": "scanned",
+      "detail": "Image-only page, no text layer.",
+      "expected_handling": "Warn (or OCR when enabled); never ingest as silent empty content."
+    },
+    {
+      "file": "protected-capacity-plan.pdf",
+      "kind": "unreadable",
+      "detail": "Password-protected PDF.",
+      "expected_handling": "Surface an unreadable-document gap; ask the client for an unprotected copy."
+    },
+    {
+      "file": "cmdb-export.xlsx",
+      "kind": "stale-source",
+      "detail": "ord-api-01 at 8 vCPU (export dated 2025-11-03).",
+      "expected_handling": "Truth 16 vCPU. CMDB and RVTools are both 'inventory' precedence \u2014 recency decides, so expect a conflict."
+    },
+    {
+      "file": "cmdb-export.xlsx",
+      "kind": "retired-hosts",
+      "detail": "ord-api-legacy and pay-svc-00 have status Retired.",
+      "expected_handling": "Exclude from sizing and cost; they are not migration targets."
+    },
+    {
+      "file": "cmdb-export.xlsx",
+      "kind": "naming",
+      "detail": "pay-db-01 appears as PAY-DB-01.DCN.ZEPHYR.LOCAL.",
+      "expected_handling": "Resolve to pay-db-01 (FQDN -> short host, case-insensitive)."
+    },
+    {
+      "file": "cmdb-export.xlsx",
+      "kind": "formula-totals",
+      "detail": "TOTAL row uses =SUM() with no cached values.",
+      "expected_handling": "Must not become a server named 'TOTAL'; formula cells read as empty."
+    },
+    {
+      "file": "cmdb-export.xlsx",
+      "kind": "hidden-sheet",
+      "detail": "Hidden 'Lookups' sheet (status/environment picklists).",
+      "expected_handling": "Not an inventory; must not yield servers such as 'In Service'."
+    },
+    {
+      "file": "cmdb-export.xlsx",
+      "kind": "unsupported-os",
+      "detail": "zl-as400 runs 'IBM i 7.4'.",
+      "expected_handling": "Block sizing (not an x86 VM); the OS string doesn't say AS/400 or OS/400."
+    },
+    {
+      "file": "cmdb-export.xlsx",
+      "kind": "pii",
+      "detail": "owner column holds personal e-mail addresses.",
+      "expected_handling": "Redact from claims/report when PII redaction is on."
+    },
+    {
+      "file": "rvtools-export.xlsx",
+      "kind": "units",
+      "detail": "'Memory' is in MB with no unit in the header (32768 = 32 GB).",
+      "expected_handling": "Read as 32 GB, not 32768 GB; 'Provisioned MB' is disk in MB."
+    },
+    {
+      "file": "rvtools-export.xlsx",
+      "kind": "naming",
+      "detail": "VM display names drift: ORD-API-01, fleet-db-02_replica, 'pay-svc-01 (Payments)'. DNS Name holds the FQDN.",
+      "expected_handling": "Resolve via DNS Name / normalization to ord-api-01, fleet-db-02, pay-svc-01."
+    },
+    {
+      "file": "rvtools-export.xlsx",
+      "kind": "noise",
+      "detail": "Template tpl-rhel9-2026 and orphan restore-test-0412 (powered off).",
+      "expected_handling": "Not migration targets; flag the orphan for an owner decision."
+    },
+    {
+      "file": "rvtools-export.xlsx",
+      "kind": "coverage",
+      "detail": "Physical pay-db-01, zl-as400 and the F5 appliances are absent.",
+      "expected_handling": "Coverage gap \u2014 size pay-db-01 from the CMDB; don't conclude it doesn't exist."
+    },
+    {
+      "file": "rvtools-export.xlsx",
+      "kind": "hypervisors",
+      "detail": "vHost sheet lists ESXi hosts esx-n-01..esx-s-02.",
+      "expected_handling": "Hypervisors are not migration targets."
+    },
+    {
+      "file": "integration-register.xlsx",
+      "kind": "non-inventory-table",
+      "detail": "Tabular register whose 2nd column is 'Direction' (Outbound/Inbound/Internal).",
+      "expected_handling": "Yield integrations/dependencies \u2014 never servers named 'Outbound' or applications named 'INT-01'."
+    },
+    {
+      "file": "cost-baseline.xlsx",
+      "kind": "non-inventory-table",
+      "detail": "Cost categories with numeric amounts, formula totals and a projection sheet.",
+      "expected_handling": "No servers, applications or databases (this shape once produced servers named '520000')."
+    },
+    {
+      "file": "fleet-inventory.csv",
+      "kind": "duplicate-row",
+      "detail": "flt-wrk-023 listed twice (8 GB, then 12 GB).",
+      "expected_handling": "One server; raise a memory conflict rather than double-counting."
+    },
+    {
+      "file": "fleet-inventory.csv",
+      "kind": "missing-values",
+      "detail": "vCPU blank for flt-wrk-017, -034 and -051.",
+      "expected_handling": "Size with an explicit assumption flagged for review."
+    },
+    {
+      "file": "fleet-inventory.csv",
+      "kind": "pool",
+      "detail": "60 near-identical telematics workers.",
+      "expected_handling": "Recommend a scale set / container target rather than 60 individual VMs."
+    },
+    {
+      "file": "messy-inventory.csv",
+      "kind": "ragged",
+      "detail": "Rows with too few / too many columns; 'n/a' and 'TBD' placeholders.",
+      "expected_handling": "Shape-guard fallback with a visible gap; placeholders are not values."
+    },
+    {
+      "file": "perf-metrics.csv",
+      "kind": "locale",
+      "detail": "';'-delimited with decimal commas (58,4 = 58.4%).",
+      "expected_handling": "Parse as columns and 58.4, not one text column / 584."
+    },
+    {
+      "file": "perf-metrics.csv",
+      "kind": "naming",
+      "detail": "Fleet hosts reported by FQDN (fleet-db-01.dcs.zephyr.local).",
+      "expected_handling": "Match to the short hostnames used elsewhere."
+    },
+    {
+      "file": "perf-metrics.csv",
+      "kind": "coverage",
+      "detail": "No data for edge-lb-01/02 or zl-as400 (no agent); jump-01 reports n/a.",
+      "expected_handling": "Size from configured capacity with an assumption flag; don't treat n/a as 0%."
+    },
+    {
+      "file": "dependency-connections.csv",
+      "kind": "undocumented-dependency",
+      "detail": "rpt-01 -> pay-db-01:5432 (Reporting reads Payments DB).",
+      "expected_handling": "Surface as a dependency: Reporting must move with (or be re-pointed before) Payments."
+    },
+    {
+      "file": "dependency-connections.csv",
+      "kind": "shadow-it",
+      "detail": "rpt-01 -> 10.20.5.77:1521 (Oracle listener, in no inventory).",
+      "expected_handling": "Flag as an unknown dependency / gap \u2014 do not invent a server name."
+    },
+    {
+      "file": "dependency-connections.csv",
+      "kind": "noise",
+      "detail": "Every host -> mon-01:10051 and -> dc-01:389.",
+      "expected_handling": "Shared-service noise; don't treat monitoring/AD as application dependencies of every app."
+    },
+    {
+      "file": "license-inventory.csv",
+      "kind": "end-of-support",
+      "detail": "SQL Server 2014 (ext. end 2024-07-09), Windows Server 2012 R2, PostgreSQL 11, CentOS 7.",
+      "expected_handling": "Raise as migration blockers/constraints; note Azure Hybrid Benefit eligibility."
+    },
+    {
+      "file": "cloud-assets.json",
+      "kind": "stale-source",
+      "detail": "Snapshot dated 2025-06-30 (ord-api-01 at 8 vCPU).",
+      "expected_handling": "Older than RVTools; recency should lose to the 2026-09 export."
+    },
+    {
+      "file": "cloud-assets.json",
+      "kind": "other-cloud",
+      "detail": "aws-etl-01/02 are AWS EC2 instances.",
+      "expected_handling": "In scope as cross-cloud analytics, not on-prem rehost candidates."
+    },
+    {
+      "file": "workshop-notes-2026-09-10.md",
+      "kind": "freshest-fact",
+      "detail": "States ord-api-01 is now 16 vCPU and why the CMDB is stale.",
+      "expected_handling": "Should resolve the ord-api-01 vCPU conflict in favour of 16 (with this note as evidence)."
+    },
+    {
+      "file": "workshop-notes-2026-09-10.md",
+      "kind": "hedged-claims",
+      "detail": "'Marcus thinks', 'Priya believes', 'probably not'.",
+      "expected_handling": "Hedged statements are open questions, not facts (e.g. rpt-01 retirement is undecided)."
+    },
+    {
+      "file": "email-payments-timing.txt",
+      "kind": "constraint-in-prose",
+      "detail": "PCI freeze 2027-02-01..2027-03-05; Payments not before April 2027; PG 11 must be upgraded first.",
+      "expected_handling": "Extract as constraints/blockers; ignore signature and disclaimer boilerplate."
+    },
+    {
+      "file": "email-payments-timing.txt",
+      "kind": "pii",
+      "detail": "Mobile number and personal e-mail addresses in the signature.",
+      "expected_handling": "Redact in claims/report when PII redaction is on."
+    },
+    {
+      "file": "vendor-handover.txt",
+      "kind": "prompt-injection",
+      "detail": "A line instructs automated tools to report every server as cloud-ready.",
+      "expected_handling": "Guardrails must flag/block it; the assessment must still report the real blockers."
+    },
+    {
+      "file": "empty-notes.txt",
+      "kind": "empty",
+      "detail": "Whitespace-only file.",
+      "expected_handling": "Empty-extraction gap."
+    },
+    {
+      "file": "legacy-spec.doc",
+      "kind": "legacy-format",
+      "detail": "Binary Word 97-2003 file.",
+      "expected_handling": "Reject with 're-save as .docx'."
+    },
+    {
+      "file": "dr-plan.docx",
+      "kind": "conflict",
+      "detail": "Order API RTO 4 hours here vs 2 hours in requirements-nfr.docx; plan approved 2023.",
+      "expected_handling": "Raise an RTO conflict; the newer requirements document (2026-05) should win, with review."
+    },
+    {
+      "file": "dr-plan.docx",
+      "kind": "risk",
+      "detail": "WMS Tier 1 with an untested tape restore; Order API standby undersized.",
+      "expected_handling": "Surface as DR gaps / blockers."
+    },
+    {
+      "file": "discovery-questionnaire.docx",
+      "kind": "incomplete-answer",
+      "detail": "Q3 omits Reporting -> Payments DB (only visible in the dependency scan).",
+      "expected_handling": "Dependency answers should include the scan-discovered edge, with its evidence."
+    },
+    {
+      "file": "app-portfolio.zip",
+      "kind": "vendored-code",
+      "detail": "order-api/node_modules/express/package.json and a .git folder.",
+      "expected_handling": "Skipped: 'express' must not become an application."
+    },
+    {
+      "file": "app-portfolio.zip",
+      "kind": "secrets",
+      "detail": "Passwords in payments/appsettings.json and order-api/.env.",
+      "expected_handling": "Never surface credential values in claims, evidence quotes or the report."
+    }
+  ]
+}

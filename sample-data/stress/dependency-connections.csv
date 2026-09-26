@@ -1,0 +1,53 @@
+Time slot,Source server name,Source IP,Source application,Source process,Destination server name,Destination IP,Destination application,Destination process,Destination port
+2026-08-21..2026-09-20,ord-api-01,10.10.1.10,Order API (zephyr-order-api),node,pay-svc-01,10.10.1.15,Payments Service,w3wp,443
+2026-08-21..2026-09-20,ord-api-02,10.10.1.11,Order API (zephyr-order-api),node,pay-svc-01,10.10.1.15,Payments Service,w3wp,443
+2026-08-21..2026-09-20,ord-api-01,10.10.1.10,Order API (zephyr-order-api),node,idp-01,10.10.1.18,Identity Provider,java,443
+2026-08-21..2026-09-20,ord-api-02,10.10.1.11,Order API (zephyr-order-api),node,idp-01,10.10.1.18,Identity Provider,java,443
+2026-08-21..2026-09-20,ord-api-01,10.10.1.10,Order API (zephyr-order-api),node,kafka-01,10.20.1.23,Fleet Tracker (fleet-ingestor),java,9092
+2026-08-21..2026-09-20,ord-api-02,10.10.1.11,Order API (zephyr-order-api),node,kafka-02,10.20.1.24,Fleet Tracker (fleet-ingestor),java,9092
+2026-08-21..2026-09-20,pay-svc-01,10.10.1.15,Payments Service,Payments.exe,pay-db-01,10.10.1.16,Payments Service,postgres,5432
+2026-08-21..2026-09-20,fleet-ing-01,10.20.1.20,Fleet Tracker (fleet-ingestor),python3,kafka-01,10.20.1.23,Fleet Tracker (fleet-ingestor),java,9092
+2026-08-21..2026-09-20,fleet-ing-02,10.20.1.21,Fleet Tracker (fleet-ingestor),python3,kafka-03,10.20.1.25,Fleet Tracker (fleet-ingestor),java,9092
+2026-08-21..2026-09-20,fleet-ing-01,10.20.1.20,Fleet Tracker (fleet-ingestor),python3,fleet-db-01,10.20.1.26,Fleet Tracker (fleet-ingestor),postgres,5432
+2026-08-21..2026-09-20,fleet-ing-02,10.20.1.21,Fleet Tracker (fleet-ingestor),python3,fleet-db-01,10.20.1.26,Fleet Tracker (fleet-ingestor),postgres,5432
+2026-08-21..2026-09-20,fleet-db-01,10.20.1.26,Fleet Tracker (fleet-ingestor),postgres,fleet-db-02,10.20.1.27,Fleet Tracker (fleet-ingestor),postgres,5432
+2026-08-21..2026-09-20,rpt-01,10.10.1.28,Finance Reporting,sqlservr.exe,pay-db-01,10.10.1.16,Payments Service,postgres,5432
+2026-08-21..2026-09-20,rpt-01,10.10.1.28,Finance Reporting,sqlservr.exe,,10.20.5.77,,,1521
+2026-08-21..2026-09-20,ord-api-01,10.10.1.10,,zabbix_agentd,mon-01,10.10.1.35,,zabbix_server,10051
+2026-08-21..2026-09-20,ord-api-01,10.10.1.10,,lsass.exe,dc-01,10.10.1.32,,lsass.exe,389
+2026-08-21..2026-09-20,ord-api-02,10.10.1.11,,zabbix_agentd,mon-01,10.10.1.35,,zabbix_server,10051
+2026-08-21..2026-09-20,ord-api-02,10.10.1.11,,lsass.exe,dc-01,10.10.1.32,,lsass.exe,389
+2026-08-21..2026-09-20,ord-api-03,10.20.1.12,,zabbix_agentd,mon-01,10.10.1.35,,zabbix_server,10051
+2026-08-21..2026-09-20,ord-api-03,10.20.1.12,,lsass.exe,dc-01,10.10.1.32,,lsass.exe,389
+2026-08-21..2026-09-20,ord-api-dev-01,10.10.1.13,,zabbix_agentd,mon-01,10.10.1.35,,zabbix_server,10051
+2026-08-21..2026-09-20,ord-api-dev-01,10.10.1.13,,lsass.exe,dc-01,10.10.1.32,,lsass.exe,389
+2026-08-21..2026-09-20,pay-svc-01,10.10.1.15,,zabbix_agentd,mon-01,10.10.1.35,,zabbix_server,10051
+2026-08-21..2026-09-20,pay-svc-01,10.10.1.15,,lsass.exe,dc-01,10.10.1.32,,lsass.exe,389
+2026-08-21..2026-09-20,idp-01,10.10.1.18,,zabbix_agentd,mon-01,10.10.1.35,,zabbix_server,10051
+2026-08-21..2026-09-20,idp-01,10.10.1.18,,lsass.exe,dc-01,10.10.1.32,,lsass.exe,389
+2026-08-21..2026-09-20,idp-02,10.20.1.19,,zabbix_agentd,mon-01,10.10.1.35,,zabbix_server,10051
+2026-08-21..2026-09-20,idp-02,10.20.1.19,,lsass.exe,dc-01,10.10.1.32,,lsass.exe,389
+2026-08-21..2026-09-20,fleet-ing-01,10.20.1.20,,zabbix_agentd,mon-01,10.10.1.35,,zabbix_server,10051
+2026-08-21..2026-09-20,fleet-ing-01,10.20.1.20,,lsass.exe,dc-01,10.10.1.32,,lsass.exe,389
+2026-08-21..2026-09-20,fleet-ing-02,10.20.1.21,,zabbix_agentd,mon-01,10.10.1.35,,zabbix_server,10051
+2026-08-21..2026-09-20,fleet-ing-02,10.20.1.21,,lsass.exe,dc-01,10.10.1.32,,lsass.exe,389
+2026-08-21..2026-09-20,fleet-ing-stg-01,10.20.1.22,,zabbix_agentd,mon-01,10.10.1.35,,zabbix_server,10051
+2026-08-21..2026-09-20,fleet-ing-stg-01,10.20.1.22,,lsass.exe,dc-01,10.10.1.32,,lsass.exe,389
+2026-08-21..2026-09-20,kafka-01,10.20.1.23,,zabbix_agentd,mon-01,10.10.1.35,,zabbix_server,10051
+2026-08-21..2026-09-20,kafka-01,10.20.1.23,,lsass.exe,dc-01,10.10.1.32,,lsass.exe,389
+2026-08-21..2026-09-20,kafka-02,10.20.1.24,,zabbix_agentd,mon-01,10.10.1.35,,zabbix_server,10051
+2026-08-21..2026-09-20,kafka-02,10.20.1.24,,lsass.exe,dc-01,10.10.1.32,,lsass.exe,389
+2026-08-21..2026-09-20,kafka-03,10.20.1.25,,zabbix_agentd,mon-01,10.10.1.35,,zabbix_server,10051
+2026-08-21..2026-09-20,kafka-03,10.20.1.25,,lsass.exe,dc-01,10.10.1.32,,lsass.exe,389
+2026-08-21..2026-09-20,fleet-db-01,10.20.1.26,,zabbix_agentd,mon-01,10.10.1.35,,zabbix_server,10051
+2026-08-21..2026-09-20,fleet-db-01,10.20.1.26,,lsass.exe,dc-01,10.10.1.32,,lsass.exe,389
+2026-08-21..2026-09-20,fleet-db-02,10.20.1.27,,zabbix_agentd,mon-01,10.10.1.35,,zabbix_server,10051
+2026-08-21..2026-09-20,fleet-db-02,10.20.1.27,,lsass.exe,dc-01,10.10.1.32,,lsass.exe,389
+2026-08-21..2026-09-20,rpt-01,10.10.1.28,,zabbix_agentd,mon-01,10.10.1.35,,zabbix_server,10051
+2026-08-21..2026-09-20,rpt-01,10.10.1.28,,lsass.exe,dc-01,10.10.1.32,,lsass.exe,389
+2026-08-21..2026-09-20,dc-02,10.20.1.33,,zabbix_agentd,mon-01,10.10.1.35,,zabbix_server,10051
+2026-08-21..2026-09-20,dc-02,10.20.1.33,,lsass.exe,dc-01,10.10.1.32,,lsass.exe,389
+2026-08-21..2026-09-20,jump-01,10.10.1.34,,zabbix_agentd,mon-01,10.10.1.35,,zabbix_server,10051
+2026-08-21..2026-09-20,jump-01,10.10.1.34,,lsass.exe,dc-01,10.10.1.32,,lsass.exe,389
+2026-08-21..2026-09-20,file-01,10.10.1.36,,zabbix_agentd,mon-01,10.10.1.35,,zabbix_server,10051
+2026-08-21..2026-09-20,file-01,10.10.1.36,,lsass.exe,dc-01,10.10.1.32,,lsass.exe,389

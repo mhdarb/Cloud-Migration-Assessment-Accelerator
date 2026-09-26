@@ -1,5 +1,6 @@
 hostname,os,vcpu,notes
-srv-a,RHEL 9,4,ok
-srv-b,Ubuntu 22.04
-srv-c,Windows,8,decommission planned,extra-trailing-field
-srv-d,RHEL 9,4,ok
+jump-01,Windows Server 2019,2,bastion - MFA via RDP gateway
+mon-01,CentOS 7
+file-01,Windows Server 2016,4,DFS share \\file-01\finance; decom after SharePoint move?,TBD
+dc-01,Windows Server 2019,2,FSMO roles
+restore-test-0412,RHEL 9,n/a,who owns this?

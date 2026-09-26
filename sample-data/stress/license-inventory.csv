@@ -1,0 +1,10 @@
+Product,Edition,Version,Installed On,License Model,Cores Licensed,Mainstream End,Extended End,Notes
+SQL Server,Standard,2014 SP3,rpt-01,Per core (SA lapsed 2023),4,2019-07-09,2024-07-09,FinanceDW; no ESU purchased
+Windows Server,Datacenter,2012 R2,rpt-01,Per core (SA),16,2018-10-09,2023-10-10,Out of support
+Windows Server,Datacenter,2022,pay-svc-01,Per core (SA),16,2026-10-13,2031-10-14,AHB eligible
+Windows Server,Datacenter,2019,dc-01;dc-02;jump-01,Per core (SA),48,2024-01-09,2029-01-09,AHB eligible
+Red Hat Enterprise Linux,Server,7,pay-db-01;ord-api-legacy,Subscription + ELS,,2019-08-06,2028-06-30,ELS add-on required
+Red Hat Enterprise Linux,Server,9,ord-api-01;ord-api-02;ord-api-03;ord-api-dev-01,Subscription,,2027-05-31,2032-05-31,
+PostgreSQL,Community,11,pay-db-01,Open source,,2023-11-09,2023-11-09,Upgrade to 16 before/with migration
+IBM i,,7.4,zl-as400,IBM subscription,,,,Hardware maintenance renews 2027-03
+CentOS,,7,mon-01,Community,,2020-08-06,2024-06-30,EOL; replace with Azure Monitor
