@@ -161,9 +161,17 @@ export function useAssessment(id: string) {
 
   // After any review decision, reload everything it can affect (entities, sizing, report,
   // review status, activity feed).
+  // After a review decision: apply the server's updated item at once, free the button,
+  // and let everything the decision can affect (entities, sizing, report, answers,
+  // activity feed) refresh in the background. Awaiting that whole reload — which includes
+  // question answers rebuilt with an LLM — is what made each click feel slow.
   const refreshAfterReview = async () => {
-    await loadDetails("completed");
+    void loadDetails("completed");
     await loadCore();
+  };
+  const replaceById = <T extends { id: string }>(updated: T[]) => (prev: T[]) => {
+    const byId = new Map(updated.map((item) => [item.id, item]));
+    return prev.map((item) => byId.get(item.id) ?? item);
   };
 
   const onReview = (
@@ -173,25 +181,28 @@ export function useAssessment(id: string) {
     notes?: string
   ) =>
     runAction(async () => {
-      await api.reviewClaim(id, claimId, action, override_value, notes, reviewerOrUndefined());
+      const updated = await api.reviewClaim(id, claimId, action, override_value, notes, reviewerOrUndefined());
+      setClaims(replaceById([updated]));
       await refreshAfterReview();
     }, "Review failed");
 
   const onReviewBatch = (reviews: ClaimReviewInput[]) =>
     runAction(async () => {
-      await api.reviewClaims(id, reviews, reviewerOrUndefined());
+      setClaims(replaceById(await api.reviewClaims(id, reviews, reviewerOrUndefined())));
       await refreshAfterReview();
     }, "Batch review failed");
 
   const onDismissConflict = (conflictId: string, notes?: string) =>
     runAction(async () => {
-      await api.dismissConflict(id, conflictId, notes, reviewerOrUndefined());
+      const updated = await api.dismissConflict(id, conflictId, notes, reviewerOrUndefined());
+      setConflicts(replaceById([updated]));
       await refreshAfterReview();
     }, "Dismiss conflict failed");
 
   const onReviewEdge = (edgeId: string, action: "accept" | "reject", notes?: string) =>
     runAction(async () => {
-      await api.reviewEdge(id, edgeId, action, notes, reviewerOrUndefined());
+      const updated = await api.reviewEdge(id, edgeId, action, notes, reviewerOrUndefined());
+      setReviewEdges(replaceById([updated]));
       await refreshAfterReview();
     }, "Edge review failed");
 
@@ -201,7 +212,8 @@ export function useAssessment(id: string) {
     notes?: string
   ) =>
     runAction(async () => {
-      await api.reviewRecommendation(id, recommendationId, action, notes, reviewerOrUndefined());
+      const updated = await api.reviewRecommendation(id, recommendationId, action, notes, reviewerOrUndefined());
+      setRecommendations(replaceById([updated]));
       await refreshAfterReview();
     }, "Recommendation review failed");
 

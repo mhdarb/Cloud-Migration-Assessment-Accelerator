@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import threading
+from collections import OrderedDict
 from typing import Any
 
 from app.services.llm_clients import get_chat_completer
@@ -15,6 +18,42 @@ from app.services.ports import ChatCompleter
 from app.services.text_format import plain_text
 
 REWRITE_BATCH_SIZE = 20
+REWRITE_CACHE_MAX_ENTRIES = 5000
+_REWRITE_CACHE: OrderedDict[str, str] = OrderedDict()
+_REWRITE_CACHE_LOCK = threading.Lock()
+
+
+def _rewrite_key(model_key: str, item: dict[str, Any]) -> str:
+    """Everything the rewrite depends on: model, prompt, question, facts, quotes (not the
+    answer id — the same question elsewhere reuses the prose)."""
+    material = json.dumps(
+        [model_key, QUESTION_REWRITE_SYSTEM, item["question"], item["facts"], item["quotes"]],
+        sort_keys=True,
+        ensure_ascii=True,
+        default=str,
+    )
+    return hashlib.sha256(material.encode()).hexdigest()
+
+
+def _cache_get(key: str) -> str | None:
+    with _REWRITE_CACHE_LOCK:
+        text = _REWRITE_CACHE.get(key)
+        if text is not None:
+            _REWRITE_CACHE.move_to_end(key)
+        return text
+
+
+def _cache_put(key: str, text: str) -> None:
+    with _REWRITE_CACHE_LOCK:
+        _REWRITE_CACHE[key] = text
+        _REWRITE_CACHE.move_to_end(key)
+        while len(_REWRITE_CACHE) > REWRITE_CACHE_MAX_ENTRIES:
+            _REWRITE_CACHE.popitem(last=False)
+
+
+def clear_rewrite_cache() -> None:
+    with _REWRITE_CACHE_LOCK:
+        _REWRITE_CACHE.clear()
 
 
 class GroundedProse:
@@ -60,11 +99,32 @@ class GroundedProse:
                     "quotes": quotes[:8],
                 }
             )
+        # Answers whose question, facts and quotes are unchanged since they were last
+        # rewritten reuse that prose: a review click changes one or two answers, and
+        # re-sending all of them to the LLM made every click slow.
+        by_id: dict[str, str] = {}
+        todo: list[dict[str, Any]] = []
+        keys: dict[str, str] = {}
+        model_key = getattr(self._completer, "cache_key", None)
+        for item in payload:
+            if model_key is None:
+                todo.append(item)
+                continue
+            key = _rewrite_key(model_key, item)
+            keys[item["id"]] = key
+            cached = _cache_get(key)
+            if cached is None:
+                todo.append(item)
+            else:
+                by_id[item["id"]] = cached
         # A client questionnaire can carry hundreds of questions; one call for all of them
         # would overrun the model's output budget and lose every rewrite on truncation.
-        by_id: dict[str, str] = {}
-        for start in range(0, len(payload), REWRITE_BATCH_SIZE):
-            by_id.update(self._rewrite_batch(payload[start : start + REWRITE_BATCH_SIZE]))
+        for start in range(0, len(todo), REWRITE_BATCH_SIZE):
+            fresh = self._rewrite_batch(todo[start : start + REWRITE_BATCH_SIZE])
+            by_id.update(fresh)
+            for answer_id, prose_text in fresh.items():
+                if answer_id in keys:
+                    _cache_put(keys[answer_id], prose_text)
         for answer in answers:
             text = by_id.get(answer["id"])
             if text:

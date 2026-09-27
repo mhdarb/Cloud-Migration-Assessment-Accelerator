@@ -52,6 +52,7 @@ from app.services.pipeline_lock import is_in_flight, recover_if_interrupted
 from app.services.providers import get_retriever
 from app.services.report import report_to_schema
 from app.services.review import review_queue_status
+from app.services.search import CachingRetriever
 
 router = APIRouter(prefix="/assessments", tags=["assessments"])
 
@@ -615,8 +616,10 @@ def add_follow_up_note(
 
 
 def _questions_retriever():
+    """Retriever for request-time work (answers, report rebuilds after a review click):
+    results are cached per pipeline run, since review decisions never change them."""
     try:
-        return get_retriever()
+        return CachingRetriever(get_retriever())
     except Exception:
         return None
 

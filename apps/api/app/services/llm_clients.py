@@ -51,6 +51,9 @@ class OpenAICompatibleCompleter:
         self._model = model
         self.source = source
         self.enabled = True
+        # Identifies the model for response caching (same provider + deployment -> same
+        # output for the same prompt at our low temperatures).
+        self.cache_key = f"{source}:{model}"
 
     def _call(self, **kwargs: Any) -> Any:
         settings = get_settings()

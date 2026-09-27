@@ -21,11 +21,18 @@ from app.services.llm_clients import clear_llm_client_cache
 
 @pytest.fixture(autouse=True)
 def _clear_settings_and_llm_caches():
+    from app.services.llm_reasoning import clear_rewrite_cache
+    from app.services.search import clear_retrieval_cache
+
     get_settings.cache_clear()
     clear_llm_client_cache()
+    clear_retrieval_cache()
+    clear_rewrite_cache()
     yield
     get_settings.cache_clear()
     clear_llm_client_cache()
+    clear_retrieval_cache()
+    clear_rewrite_cache()
 
 
 @pytest.fixture()

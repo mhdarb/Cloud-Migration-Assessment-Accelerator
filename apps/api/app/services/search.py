@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
+from collections import OrderedDict
 
 from sqlalchemy.orm import Session
 
@@ -325,6 +327,59 @@ class RerankingRetriever:
         except Exception:
             logger.exception("Reranker failed; falling back to pre-rerank ranking")
             return candidates[:k]
+
+
+# --------------------------------------------------------------------------- #
+# Per-run retrieval cache
+# --------------------------------------------------------------------------- #
+RETRIEVAL_CACHE_MAX_ENTRIES = 4000
+_RETRIEVAL_CACHE: OrderedDict[tuple[str, str, str, int], list[str]] = OrderedDict()
+_RETRIEVAL_CACHE_LOCK = threading.Lock()
+
+
+class CachingRetriever:
+    """Decorator that memoizes retrieval results for the lifetime of a pipeline run.
+
+    What a query retrieves depends only on the query and the indexed chunks, and the
+    chunks only change when the pipeline runs — review decisions, questions asked or
+    page reloads never change them. Without this, every review click rebuilt the report
+    and re-answered every question: with real embeddings and Azure AI Search that is an
+    embedding call plus a search call per (expanded) sub-query, per question, per click.
+
+    Keyed by (assessment, run start time, query, top_k); a new run has a new start time,
+    so nothing stale is ever served. Runs without a start time are never cached.
+    """
+
+    def __init__(self, inner: Retriever) -> None:
+        self._inner = inner
+
+    def retrieve(self, db: Session, assessment_id: str, query: str, top_k: int | None = None) -> list[Chunk]:
+        from app.models.entities import Assessment
+
+        started = db.query(Assessment.pipeline_started_at).filter(Assessment.id == assessment_id).scalar()
+        if started is None:
+            return self._inner.retrieve(db, assessment_id, query, top_k=top_k)
+        key = (assessment_id, started.isoformat(), query, top_k or 0)
+        with _RETRIEVAL_CACHE_LOCK:
+            ids = _RETRIEVAL_CACHE.get(key)
+            if ids is not None:
+                _RETRIEVAL_CACHE.move_to_end(key)
+        if ids is not None:
+            rows = {c.id: c for c in db.query(Chunk).filter(Chunk.id.in_(ids))} if ids else {}
+            if len(rows) == len(ids):  # all still present (no newer run replaced them)
+                return [rows[i] for i in ids]
+        chunks = self._inner.retrieve(db, assessment_id, query, top_k=top_k)
+        with _RETRIEVAL_CACHE_LOCK:
+            _RETRIEVAL_CACHE[key] = [c.id for c in chunks]
+            _RETRIEVAL_CACHE.move_to_end(key)
+            while len(_RETRIEVAL_CACHE) > RETRIEVAL_CACHE_MAX_ENTRIES:
+                _RETRIEVAL_CACHE.popitem(last=False)
+        return chunks
+
+
+def clear_retrieval_cache() -> None:
+    with _RETRIEVAL_CACHE_LOCK:
+        _RETRIEVAL_CACHE.clear()
 
 
 def embed_and_index(db: Session, assessment_id: str) -> dict:
