@@ -35,6 +35,7 @@ function AssessmentDetail() {
     recommendations,
     reviewEdges,
     reviewStatus,
+    usage,
     loadState,
     reviewer,
     setReviewer,
@@ -198,6 +199,7 @@ function AssessmentDetail() {
       {tab === "overview" && (
         <OverviewTab
           assessment={assessment}
+          usage={usage}
           claims={claims}
           recommendations={recommendations}
           busy={busy}

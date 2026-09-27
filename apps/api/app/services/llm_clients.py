@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from app.azure_clients import get_azure_openai_client
 from app.config import get_settings
 from app.observability import trace_span
+from app.services import usage
 from app.services.ports import ChatCompleter
 
 logger = logging.getLogger(__name__)
@@ -60,9 +61,12 @@ class OpenAICompatibleCompleter:
         attempts = max(1, settings.llm_max_retries + 1)
         for attempt in range(attempts):
             try:
-                return self._client.chat.completions.create(
+                response = self._client.chat.completions.create(
                     timeout=settings.llm_timeout_seconds, **kwargs
                 )
+                # Only successful responses are billed; failed attempts aren't counted.
+                usage.record_chat(self.source, self._model, response, kwargs.get("messages") or [])
+                return response
             except _RETRYABLE_EXCEPTIONS:
                 if attempt >= attempts - 1:
                     raise

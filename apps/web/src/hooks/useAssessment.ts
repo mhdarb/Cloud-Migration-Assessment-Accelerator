@@ -14,6 +14,7 @@ import {
   InfrastructureRecommendation,
   Report,
   ReviewStatus,
+  Usage,
 } from "@/lib/api";
 import { isTerminal } from "@/lib/status";
 
@@ -37,6 +38,7 @@ export function useAssessment(id: string) {
   >([]);
   const [reviewEdges, setReviewEdges] = useState<DependencyEdge[]>([]);
   const [reviewStatus, setReviewStatus] = useState<ReviewStatus | null>(null);
+  const [usage, setUsage] = useState<Usage | null>(null);
   const [reviewer, setReviewerState] = useState("");
   const [loadState, setLoadState] = useState<LoadState>({});
   const [error, setError] = useState<string | null>(null);
@@ -100,6 +102,7 @@ export function useAssessment(id: string) {
       track(api.recommendations(id), "recommendations", "recommendations", setRecommendations),
       track(api.edges(id, true), null, "dependency edges", setReviewEdges),
       track(api.reviewStatus(id), null, "review status", setReviewStatus),
+      track(api.usage(id), null, "usage", setUsage),
       api.report(id).then(setReport, () => {
         setReport(null);
         if (isTerminal(status)) failed.push("report");
@@ -292,6 +295,7 @@ export function useAssessment(id: string) {
     recommendations,
     reviewEdges,
     reviewStatus,
+    usage,
     loadState,
     reviewer,
     setReviewer,

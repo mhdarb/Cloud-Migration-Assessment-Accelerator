@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import type { Assessment, Claim, DocumentOut, InfrastructureRecommendation } from "@/lib/api";
+import type { Assessment, Claim, DocumentOut, InfrastructureRecommendation, Usage } from "@/lib/api";
+import { UsageCard } from "@/components/assessment/UsageCard";
 import { PIPELINE_STAGES } from "@/lib/tabs";
 import { isInFlight } from "@/lib/status";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -89,6 +90,7 @@ function DocumentRow({
 
 export function OverviewTab({
   assessment,
+  usage,
   claims,
   recommendations,
   busy,
@@ -97,6 +99,7 @@ export function OverviewTab({
   onUnlockDocument,
 }: {
   assessment: Assessment;
+  usage: Usage | null;
   claims: Claim[];
   recommendations: InfrastructureRecommendation[];
   busy: boolean;
@@ -193,6 +196,7 @@ export function OverviewTab({
           <Metric label="Inferred edges" value={inferredEdges} />
         </div>
       </div>
+      <UsageCard usage={usage} running={isInFlight(assessment.status)} />
       <ConfirmDialog
         open={pendingRemove !== null}
         title="Remove document"

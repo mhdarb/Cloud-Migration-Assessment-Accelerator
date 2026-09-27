@@ -8,6 +8,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from app.models.entities import Assessment, PipelineStatus, WorkflowStage
+from app.services import usage
 from app.services.assessment_questions import plan_dynamic_questions
 from app.services.extraction_merge import merge_extractions
 from app.services.ingest import clear_derived, ingest_documents
@@ -66,23 +67,28 @@ class AssessmentPipeline:
             logger.warning("Pipeline already running for %s", assessment_id)
             return
         db = self._services.session_factory()
-        try:
-            with Heartbeat(assessment_id, self._services.session_factory):
-                self._execute(db, assessment_id)
-        except Exception as exc:
-            logger.exception("Pipeline failed for %s", assessment_id)
-            db.rollback()
-            assessment = (
-                db.query(Assessment).filter(Assessment.id == assessment_id).one_or_none()
-            )
-            if assessment:
-                assessment.status = PipelineStatus.failed
-                assessment.error_message = str(exc)
-                assessment.pipeline_finished_at = datetime.utcnow()  # freeze the timer
-                db.commit()
-        finally:
-            db.close()
-            release(assessment_id)
+        # Every LLM / embedding call made by this run is attributed to it (see usage.py).
+        with usage.metered(assessment_id, "pipeline") as meter:
+            try:
+                with Heartbeat(assessment_id, self._services.session_factory):
+                    self._execute(db, assessment_id)
+            except Exception as exc:
+                logger.exception("Pipeline failed for %s", assessment_id)
+                db.rollback()
+                assessment = (
+                    db.query(Assessment).filter(Assessment.id == assessment_id).one_or_none()
+                )
+                if assessment:
+                    assessment.status = PipelineStatus.failed
+                    assessment.error_message = str(exc)
+                    assessment.pipeline_finished_at = datetime.utcnow()  # freeze the timer
+                    db.commit()
+            finally:
+                # Record what the run consumed — also when it failed part-way (those
+                # calls were billed all the same).
+                usage.flush(meter, self._services.session_factory)
+                db.close()
+                release(assessment_id)
 
     def _execute(self, db: Session, assessment_id: str) -> None:
         assessment = db.query(Assessment).filter(Assessment.id == assessment_id).one()
@@ -92,6 +98,10 @@ class AssessmentPipeline:
         # Start the runtime clock for this run (a re-run resets it).
         assessment.pipeline_started_at = datetime.utcnow()
         assessment.pipeline_heartbeat_at = assessment.pipeline_started_at
+        meter = usage.current()
+        if meter is not None:
+            meter.run_started_at = assessment.pipeline_started_at.isoformat()
+        usage.set_stage("ingesting")
         assessment.pipeline_finished_at = None
         # A new run produces new findings, so any earlier "review completed" sign-off no
         # longer applies; the reviewer re-confirms after decisions are re-applied below.
@@ -113,9 +123,11 @@ class AssessmentPipeline:
             self._services.storage_dir,
         )
         ingested = ingest_documents(db, assessment_id)
+        usage.set_stage("indexing")
         index_meta = self._indexer.embed_and_index(db, assessment_id)
 
         assessment.status = PipelineStatus.extracting
+        usage.set_stage("extracting")
         assessment.workflow_stage = WorkflowStage.implement
         db.commit()
 
@@ -125,6 +137,7 @@ class AssessmentPipeline:
         extraction = merge_extractions([extraction, *ingested.manifest_extractions])
 
         assessment.status = PipelineStatus.reconciling
+        usage.set_stage("reconciling")
         db.commit()
         prose = get_grounded_prose()
         persist_extraction(db, assessment_id, extraction, prose=prose)
@@ -138,12 +151,14 @@ class AssessmentPipeline:
         plan_dynamic_questions(db, assessment_id)
 
         assessment.status = PipelineStatus.building_graph
+        usage.set_stage("building_graph")
         db.commit()
         relationship_meta = persist_inferred_relationships(db, assessment_id)
         reapplied += reapply_edge_decisions(db, assessment_id)
         db.commit()
 
         assessment.status = PipelineStatus.generating_report
+        usage.set_stage("generating_report")
         assessment.workflow_stage = WorkflowStage.review
         db.commit()
         recommendations = generate_recommendations(db, assessment_id)

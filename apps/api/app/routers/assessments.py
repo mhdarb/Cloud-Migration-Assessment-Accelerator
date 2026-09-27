@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from contextlib import contextmanager
 from urllib.parse import quote
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Response, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, Response, UploadFile
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from app.config import get_settings
 from app.database import get_db
@@ -41,9 +42,10 @@ from app.schemas.api import (
     ReviewDecisionRequest,
     ReviewStatusOut,
     UnlockDocumentRequest,
+    UsageOut,
 )
 from app.services import assessment_service as assessments
-from app.services import questionnaires
+from app.services import questionnaires, usage
 from app.services.assessment_questions import cached_assessment_answers
 from app.services.evidence import build_evidence_list, resolve_evidence, resolve_evidence_map
 from app.services.graph import build_graph, get_blast_radius
@@ -54,7 +56,23 @@ from app.services.report import report_to_schema
 from app.services.review import review_queue_status
 from app.services.search import CachingRetriever
 
-router = APIRouter(prefix="/assessments", tags=["assessments"])
+
+async def _meter_request(request: Request) -> AsyncIterator[None]:
+    """Attribute LLM/embedding usage made while serving a request on an assessment
+    (review clicks, questions, questionnaire answers) to that assessment. Async on purpose:
+    the meter is set in the request's own context, which sync endpoints inherit when
+    FastAPI runs them in its thread pool."""
+    assessment_id = request.path_params.get("assessment_id")
+    if not assessment_id:
+        yield
+        return
+    with usage.metered(assessment_id, "interactive") as meter:
+        yield
+    if not meter.empty:
+        await run_in_threadpool(usage.flush_interactive, meter)
+
+
+router = APIRouter(prefix="/assessments", tags=["assessments"], dependencies=[Depends(_meter_request)])
 
 
 def _assessment(db: Session, assessment_id: str):
@@ -588,6 +606,13 @@ def get_report(assessment_id: str, db: Session = Depends(get_db)) -> ReportOut:
         return report_to_schema(db, assessment_id)
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
+
+
+@router.get("/{assessment_id}/usage", response_model=UsageOut)
+def get_usage(assessment_id: str, db: Session = Depends(get_db)) -> UsageOut:
+    """LLM and embedding calls, tokens and estimated cost: the latest run (by stage),
+    usage since it (reviews, questions), and previous runs."""
+    return UsageOut.model_validate(usage.usage_summary(db, _assessment(db, assessment_id)))
 
 
 @router.post("/{assessment_id}/complete-review", response_model=AssessmentOut)

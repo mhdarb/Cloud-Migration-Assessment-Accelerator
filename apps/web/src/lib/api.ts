@@ -294,6 +294,28 @@ async function download(path: string, fallbackName: string): Promise<void> {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+export type UsageTotals = {
+  chat: { calls: number; input_tokens: number; output_tokens: number; cost: number };
+  embeddings: { calls: number; tokens: number; cost: number };
+  total_cost: number;
+  /** Some calls' tokens were estimated because the provider didn't report usage. */
+  estimated: boolean;
+};
+
+export type Usage = {
+  currency: string;
+  rates: { llm_input_per_million: number; llm_output_per_million: number; embedding_per_million: number };
+  models: string[];
+  latest_run: UsageTotals & {
+    run_started_at: string | null;
+    by_stage: (UsageTotals & { stage: string; label: string })[];
+  };
+  /** Usage after the latest run: review clicks, questions, questionnaire answers. */
+  since_run: UsageTotals;
+  all_time: UsageTotals;
+  runs: (UsageTotals & { run_started_at: string })[];
+};
+
 export type InfrastructureRecommendation = {
   id: string;
   server_key: string;
@@ -503,6 +525,7 @@ export const api = {
   recommendations: (id: string) =>
     request<InfrastructureRecommendation[]>(`/assessments/${id}/recommendations`),
   report: (id: string) => request<Report>(`/assessments/${id}/report`),
+  usage: (id: string) => request<Usage>(`/assessments/${id}/usage`),
   completeReview: (id: string) =>
     request<Assessment>(`/assessments/${id}/complete-review`, {
       method: "POST",

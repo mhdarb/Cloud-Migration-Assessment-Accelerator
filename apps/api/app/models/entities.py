@@ -388,6 +388,33 @@ class EngagementQuestion(Base):
     assessment: Mapped[Assessment] = relationship(back_populates="engagement_questions")
 
 
+class LlmUsage(Base):
+    """Metered model usage: one row per (run or request, stage, kind, model).
+
+    `scope` = "pipeline" (a run, keyed by `run_started_at`) or "interactive" (requests
+    made after that run: review clicks, questions, questionnaires). `cost` is priced when
+    recorded, with the rates configured at the time, in `currency`.
+    """
+
+    __tablename__ = "llm_usage"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    assessment_id: Mapped[str] = mapped_column(ForeignKey("assessments.id"), index=True)
+    scope: Mapped[str] = mapped_column(String(16))
+    run_started_at: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    stage: Mapped[str] = mapped_column(String(32))
+    kind: Mapped[str] = mapped_column(String(16))  # chat | embedding
+    provider: Mapped[str] = mapped_column(String(32))
+    model: Mapped[str] = mapped_column(String(128))
+    calls: Mapped[int] = mapped_column(Integer, default=0)
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    estimated_calls: Mapped[int] = mapped_column(Integer, default=0)
+    cost: Mapped[float] = mapped_column(Float, default=0.0)
+    currency: Mapped[str] = mapped_column(String(8), default="USD")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class Questionnaire(Base):
     """A client questionnaire uploaded to be answered (not ingested as evidence). The file
     is kept so answers can be written back into it on download."""

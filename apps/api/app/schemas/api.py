@@ -354,3 +354,15 @@ class ExtractionResult(BaseModel):
     dependencies: list[ExtractedDependency] = []
     gaps: list[str] = []
     assumptions: list[str] = []
+
+
+class UsageOut(BaseModel):
+    """See `usage.usage_summary`. Costs are estimates from the configured per-token rates."""
+
+    currency: str
+    rates: dict[str, float]
+    models: list[str]
+    latest_run: dict[str, Any]
+    since_run: dict[str, Any]
+    all_time: dict[str, Any]
+    runs: list[dict[str, Any]]

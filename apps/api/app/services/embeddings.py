@@ -5,6 +5,7 @@ import logging
 import numpy as np
 
 from app.config import get_settings
+from app.services import usage
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,7 @@ class SentenceTransformerEmbedder:
             normalize_embeddings=True,
             show_progress_bar=False,
         )
+        usage.record_embedding("local", get_settings().local_embedding_model, None, texts)
         return [v.astype(np.float32).tolist() for v in vectors]
 
     def embed_query(self, query: str) -> list[float]:
@@ -49,6 +51,7 @@ class AzureEmbedder:
             model=settings.azure_openai_embedding_deployment,
             input=texts,
         )
+        usage.record_embedding("azure-openai", settings.azure_openai_embedding_deployment, response, texts)
         ordered = sorted(response.data, key=lambda d: d.index)
         return [list(d.embedding) for d in ordered]
 

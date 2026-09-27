@@ -17,6 +17,7 @@ from app.models.entities import (
     Document,
     EngagementQuestion,
     InfrastructureRecommendation,
+    LlmUsage,
     PipelineStatus,
     ReviewDecision,
     WorkflowStage,
@@ -129,6 +130,7 @@ def delete_assessment(db: Session, assessment: Assessment) -> None:
     # Review decisions survive re-runs by design, so they must be removed explicitly here.
     db.query(ReviewDecision).filter(ReviewDecision.assessment_id == assessment_id).delete()
     delete_assessment_questionnaires(db, assessment_id)
+    db.query(LlmUsage).filter(LlmUsage.assessment_id == assessment_id).delete()
     db.query(Document).filter(Document.assessment_id == assessment_id).delete()
     db.delete(assessment)
     db.commit()
