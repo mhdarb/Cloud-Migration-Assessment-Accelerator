@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { AssessmentAnswers } from "@/lib/api";
 import { AnswerCard } from "@/components/assessment/AnswerCard";
+import { isInFlight } from "@/lib/status";
 import { QuestionnairePanel } from "@/components/assessment/QuestionnairePanel";
 
 export function QuestionsTab({
@@ -40,6 +41,12 @@ export function QuestionsTab({
             {answers?.question_set || "migration-readiness-v1"}
           </span>
         </div>
+        {isInFlight(status) && standard.length > 0 && (
+          <p className="sans mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            Draft answers from the facts found so far. The final AI-written answers appear
+            when the run completes.
+          </p>
+        )}
         <div className="mt-4 space-y-4">
           {standard.map((answer) => (
             <AnswerCard key={answer.id} answer={answer} />

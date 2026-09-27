@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.models.entities import Assessment, PipelineStatus, WorkflowStage
 from app.services import usage
-from app.services.assessment_questions import plan_dynamic_questions
+from app.services.assessment_questions import plan_dynamic_questions, state_fingerprint
 from app.services.extraction_merge import merge_extractions
 from app.services.ingest import clear_derived, ingest_documents
 from app.services.llm_reasoning import get_grounded_prose
@@ -164,7 +164,7 @@ class AssessmentPipeline:
         recommendations = generate_recommendations(db, assessment_id)
         reapplied += reapply_recommendation_decisions(db, assessment_id)
         db.commit()
-        generate_report(
+        report = generate_report(
             db,
             assessment_id,
             extraction,
@@ -206,6 +206,15 @@ class AssessmentPipeline:
         metrics["pipeline_runtime_seconds"] = round(assessment.runtime_seconds or 0.0, 1)
         assessment.metrics = metrics
         assessment.status = PipelineStatus.completed
+        # The report step already produced the final (LLM-written) answers. Store them as
+        # the Questions tab's answers in the SAME commit that marks the run completed —
+        # otherwise the first page load after completion finds nothing stored, keeps
+        # showing the draft answers, and rebuilds everything (retrieval + LLM rewrite)
+        # before the prose appears.
+        answers = (report.report_json or {}).get("assessment_questions")
+        if answers:
+            assessment.answers_cache = answers
+            assessment.answers_fingerprint = state_fingerprint(db, assessment, include_questions=True)
         db.commit()
         logger.info("Pipeline completed for assessment %s", assessment_id)
 
