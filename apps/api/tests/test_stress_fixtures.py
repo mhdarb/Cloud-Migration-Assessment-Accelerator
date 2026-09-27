@@ -76,14 +76,19 @@ def test_empty_text_warns(estate: Path):
     assert _parse(estate, "empty-notes.txt").warnings
 
 
-def test_protected_pdf_is_rejected(estate: Path):
-    """A password-protected PDF can't be extracted — it must raise (which ingest turns
-    into an unreadable-document gap), never parse to silent empty content."""
-    with pytest.raises(Exception):
+def test_protected_pdf_needs_its_password(estate: Path):
+    """A PDF with an open password can't be read without it — it must raise the specific
+    EncryptedDocument error (ingest turns that into a 'needs password' gap the user can
+    resolve with Unlock), never parse to silent empty content."""
+    from app.services.parsers import EncryptedDocument
+
+    with pytest.raises(EncryptedDocument, match="password-protected PDF"):
         _parse(estate, "protected-capacity-plan.pdf")
 
 
-def test_legacy_doc_rejected(estate: Path):
+def test_damaged_legacy_doc_fails_clearly(estate: Path):
+    """Converted when LibreOffice is present; this fixture's body is deliberately damaged, so
+    either way the result is a clear error naming the legacy format, not a crash."""
     with pytest.raises(ValueError, match="legacy binary .doc"):
         _parse(estate, "legacy-spec.doc")
 
@@ -110,8 +115,32 @@ def test_xlsx_merged_data_cells_and_summary(estate: Path):
     assert servers.count("DC-South") >= 2
     pieces = DocumentChunker().chunk(result.pages, doc_type=result.doc_type, filename="cmdb-export.xlsx")
     assert any(p.metadata.get("kind") == "table_summary" for p in pieces)
-    # The Network sheet's hidden second header trips the shape guard -> visible fallback.
-    assert any(p.metadata.get("shape_guard_failed") for p in pieces)
+
+
+def test_cmdb_stacked_headers_totals_and_hidden_sheet(estate: Path):
+    """The group band above the labels and the Network sheet's restated header row each
+    merge into ONE header; the TOTAL row, the hidden Lookups sheet and blank formula
+    results are excluded with visible notes/warnings."""
+    result = _parse(estate, "cmdb-export.xlsx")
+    servers, network = result.pages[0].text.splitlines(), result.pages[-1].text.splitlines()
+    assert servers[1].startswith("hostname | datacenter | os | vcpu | memory_gb")
+    assert not any(line.startswith(("Identity", "TOTAL")) for line in servers)
+    assert "# NOTE: 1 total/subtotal row(s) excluded from the table" in servers
+    assert network[1] == "device | mgmt_ip | vlan" and not any(line.startswith("Device") for line in network)
+    assert not any("Lookups" in p.text for p in result.pages)
+    assert any("Hidden sheet(s) 'Lookups' skipped" in w for w in result.warnings)
+    assert any("formula cell(s) with no saved result" in w for w in result.warnings)
+
+    pieces = DocumentChunker().chunk(result.pages, doc_type=result.doc_type, filename="cmdb-export.xlsx")
+    assert not any(p.metadata.get("shape_guard_failed") for p in pieces)  # both sheets chunk as tables
+    summary = next(p for p in pieces if p.metadata.get("kind") == "table_summary")
+    assert "Row count: 16" in summary.text  # 16 servers; TOTAL and the note are not rows
+
+
+def test_permission_restricted_pdf_reads_normally(estate: Path):
+    result = _parse(estate, "restricted-sow.pdf")
+    assert "Statement of Work" in result.pages[0].text
+    assert any("permission restrictions" in w for w in result.warnings)
 
 
 def test_ragged_csv_hits_shape_guard(estate: Path):

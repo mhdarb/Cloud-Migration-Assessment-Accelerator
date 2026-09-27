@@ -257,6 +257,12 @@ export function useAssessment(id: string) {
     }, "Upload failed");
   };
 
+  const onUnlockDocument = (documentId: string, password: string) =>
+    runAction(async () => {
+      setAssessment(await api.unlockDocument(id, documentId, password));
+      restartPolling(); // the pipeline re-runs to read the unlocked file
+    }, "Unlock failed");
+
   const onRemoveDocument = (documentId: string) =>
     runAction(async () => {
       setAssessment(await api.deleteDocument(id, documentId));
@@ -293,5 +299,6 @@ export function useAssessment(id: string) {
     onDeleteAssessment,
     onAddDocuments,
     onRemoveDocument,
+    onUnlockDocument,
   };
 }

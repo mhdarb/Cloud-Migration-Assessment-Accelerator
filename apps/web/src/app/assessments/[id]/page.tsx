@@ -54,6 +54,7 @@ function AssessmentDetail() {
     onDeleteAssessment,
     onAddDocuments,
     onRemoveDocument,
+    onUnlockDocument,
   } = useAssessment(id);
 
   const [editing, setEditing] = useState(false);
@@ -202,6 +203,7 @@ function AssessmentDetail() {
           busy={busy}
           onAddDocuments={onAddDocuments}
           onRemoveDocument={onRemoveDocument}
+          onUnlockDocument={onUnlockDocument}
         />
       )}
       {tab === "questions" && (

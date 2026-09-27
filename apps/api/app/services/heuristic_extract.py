@@ -226,7 +226,9 @@ def clean_name(name: str, max_words: int = 4) -> str | None:
 
 
 def _extract_inventory_columns(chunk: Chunk) -> list[ExtractedClaim]:
-    lines = [line for line in chunk.text.splitlines() if "|" in line]
+    # `# Sheet: ...` captions and `# NOTE:` lines can contain "|" too; they are never the
+    # header row (treating the caption as the header dropped every real host).
+    lines = [line for line in chunk.text.splitlines() if "|" in line and not line.lstrip().startswith("#")]
     if not lines:
         return []
     raw_headers = lines[0].split("|")

@@ -15,6 +15,78 @@ function Metric({ label, value }: { label: string; value: string | number }) {
   );
 }
 
+function DocumentRow({
+  doc,
+  locked,
+  busy,
+  onRemove,
+  onUnlock,
+}: {
+  doc: DocumentOut;
+  locked: boolean;
+  busy: boolean;
+  onRemove: () => void;
+  onUnlock: (password: string) => Promise<boolean>;
+}) {
+  const [password, setPassword] = useState("");
+  const warnings = doc.warnings ?? [];
+  return (
+    <li className="rounded-lg bg-[#faf9f7] px-3 py-2">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="font-medium break-all">{doc.filename}</div>
+          <div className="text-xs text-[var(--muted)]">
+            {doc.doc_type} · precedence {doc.precedence}
+            {doc.page_count ? ` · ${doc.page_count} pages` : ""}
+          </div>
+        </div>
+        <button type="button" className="btn btn-secondary" disabled={locked} onClick={onRemove}>
+          Remove
+        </button>
+      </div>
+      {doc.needs_password ? (
+        <form
+          className="mt-2 flex flex-wrap items-center gap-2"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            // Cleared either way: the password is only ever held for this one request.
+            const value = password;
+            setPassword("");
+            await onUnlock(value);
+          }}
+        >
+          <span className="text-xs text-amber-800">
+            Password-protected — enter its open password to read it.
+          </span>
+          <input
+            id={`unlock-${doc.id}`}
+            className="input max-w-[14rem] py-1"
+            type="password"
+            autoComplete="off"
+            placeholder="Document password"
+            aria-label={`Password for ${doc.filename}`}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+          <button type="submit" className="btn btn-primary" disabled={locked || busy || !password}>
+            Unlock
+          </button>
+        </form>
+      ) : doc.parse_error ? (
+        <div className="mt-1 text-xs text-red-700">Couldn’t read this file: {doc.parse_error}</div>
+      ) : null}
+      {warnings.length > 0 && (
+        <ul className="mt-1 list-disc pl-4 text-xs text-[var(--muted)]">
+          {warnings.slice(0, 3).map((w) => (
+            <li key={w}>{w}</li>
+          ))}
+          {warnings.length > 3 && <li>+{warnings.length - 3} more</li>}
+        </ul>
+      )}
+    </li>
+  );
+}
+
 export function OverviewTab({
   assessment,
   claims,
@@ -22,6 +94,7 @@ export function OverviewTab({
   busy,
   onAddDocuments,
   onRemoveDocument,
+  onUnlockDocument,
 }: {
   assessment: Assessment;
   claims: Claim[];
@@ -29,6 +102,7 @@ export function OverviewTab({
   busy: boolean;
   onAddDocuments: (files: File[]) => void;
   onRemoveDocument: (documentId: string) => void;
+  onUnlockDocument: (documentId: string, password: string) => Promise<boolean>;
 }) {
   const [pendingRemove, setPendingRemove] = useState<DocumentOut | null>(null);
   const metrics = assessment.metrics || {};
@@ -76,26 +150,14 @@ export function OverviewTab({
         <h2 className="mb-3 text-lg">Documents</h2>
         <ul className="sans space-y-2 text-sm">
           {assessment.documents.map((d) => (
-            <li
+            <DocumentRow
               key={d.id}
-              className="flex items-center justify-between rounded-lg bg-[#faf9f7] px-3 py-2"
-            >
-              <div>
-                <div className="font-medium">{d.filename}</div>
-                <div className="text-xs text-[var(--muted)]">
-                  {d.doc_type} · precedence {d.precedence}
-                  {d.page_count ? ` · ${d.page_count} pages` : ""}
-                </div>
-              </div>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                disabled={docsLocked}
-                onClick={() => setPendingRemove(d)}
-              >
-                Remove
-              </button>
-            </li>
+              doc={d}
+              locked={docsLocked}
+              busy={busy}
+              onRemove={() => setPendingRemove(d)}
+              onUnlock={(password) => onUnlockDocument(d.id, password)}
+            />
           ))}
           {!assessment.documents.length && (
             <li className="text-[var(--muted)]">No documents uploaded.</li>
@@ -111,7 +173,7 @@ export function OverviewTab({
             type="file"
             multiple
             disabled={docsLocked}
-            accept=".pdf,.docx,.doc,.xlsx,.xlsm,.txt,.zip,.md"
+            accept=".pdf,.docx,.doc,.xlsx,.xlsm,.xls,.csv,.json,.txt,.zip,.md"
             onChange={(e) => {
               const files = e.target.files ? Array.from(e.target.files) : [];
               e.target.value = "";

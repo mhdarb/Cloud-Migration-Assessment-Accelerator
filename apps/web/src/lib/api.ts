@@ -69,6 +69,12 @@ export type DocumentOut = {
   precedence: number;
   page_count: number | null;
   created_at: string;
+  /** Why the last ingest couldn't read the file, if it couldn't. */
+  parse_error?: string | null;
+  /** The file has an open password; supplying it (Unlock) fixes the parse error. */
+  needs_password?: boolean;
+  /** Non-fatal notes from reading it (converted from .doc, hidden sheet skipped, ...). */
+  warnings?: string[];
 };
 
 export type Assessment = {
@@ -392,6 +398,12 @@ export const api = {
       body: form,
     });
   },
+  unlockDocument: (assessmentId: string, documentId: string, password: string) =>
+    requestJson<Assessment>(
+      `/assessments/${assessmentId}/documents/${documentId}/unlock`,
+      "POST",
+      { password }
+    ),
   deleteDocument: (assessmentId: string, documentId: string) =>
     request<Assessment>(
       `/assessments/${assessmentId}/documents/${documentId}`,

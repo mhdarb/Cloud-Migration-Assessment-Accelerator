@@ -26,7 +26,7 @@ from app.models.entities import (
 from app.schemas.api import ExtractionResult
 from app.services.chunkers import DocumentChunker, chunk_code_manifest_file
 from app.services.code_manifests import attach_chunk_ids, process_code_snapshot
-from app.services.parsers import PRECEDENCE, ChunkPiece, ParseResult, parse_file
+from app.services.parsers import PRECEDENCE, ChunkPiece, EncryptedDocument, ParseResult, parse_file
 from app.services.ports import VectorIndex
 
 logger = logging.getLogger(__name__)
@@ -159,10 +159,23 @@ def _ingest_one(
 ) -> None:
     try:
         parsed = parse_file(doc.storage_path, doc.filename)
+    except EncryptedDocument as exc:
+        # Expected and user-fixable: no traceback, and a flag the UI turns into "Unlock".
+        summary = dict(doc.parse_summary or {})
+        summary["parse_error"] = str(exc)
+        summary["needs_password"] = True
+        doc.parse_summary = summary
+        result.manifest_extractions.append(
+            ExtractionResult(
+                gaps=[f"'{doc.filename}' is password-protected and was not read; unlock it with its password."]
+            )
+        )
+        return
     except Exception as exc:
         logger.exception("Parse failed for %s", doc.filename)
         summary = dict(doc.parse_summary or {})
         summary["parse_error"] = str(exc)
+        summary.pop("needs_password", None)
         doc.parse_summary = summary
         result.manifest_extractions.append(
             ExtractionResult(gaps=[f"Skipped unreadable document {doc.filename}: {exc}"])

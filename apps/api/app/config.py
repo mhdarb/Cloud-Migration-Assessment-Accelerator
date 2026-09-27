@@ -155,6 +155,11 @@ class Settings(BaseSettings):
     pipeline_lock_stale_seconds: float = 1800.0  # 0 disables stealing
     # A live run writes a heartbeat this often; a run whose heartbeat is older than
     # PIPELINE_RUN_STALE_SECONDS is treated as dead (its process was restarted/killed).
+    # Legacy .doc/.xls conversion via headless LibreOffice ("" = auto-detect soffice).
+    libreoffice_path: str = ""
+    office_conversion_timeout_seconds: float = 120.0
+    # Hidden sheets usually hold picklists/lookups, not inventory; skipped with a warning.
+    xlsx_include_hidden_sheets: bool = False
     pipeline_heartbeat_seconds: float = 30.0
     pipeline_run_stale_seconds: float = 300.0
 

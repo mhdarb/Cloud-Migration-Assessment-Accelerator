@@ -61,10 +61,12 @@ Never a server: ESXi hosts (`esx-*`), the `tpl-rhel9-2026` template, the orphan 
 | `architecture-brief.pdf` | stale-source | ord-api-01 listed at 8 vCPU (brief last reviewed 2025-10). | Truth is 16 vCPU (RVTools 2026-09, workshop notes). Expect a vCPU conflict for review. |
 | `rack-layout.pdf` | physical-only | Lists the physical boxes (pay-db-01, zl-as400, edge-lb-01/02) and ESXi hosts esx-n-01/02. | pay-db-01 is a real migration target missing from RVTools; ESXi hosts are NOT migration targets. |
 | `scanned-runbook.pdf` | scanned | Image-only page, no text layer. | Warn (or OCR when enabled); never ingest as silent empty content. |
-| `protected-capacity-plan.pdf` | unreadable | Password-protected PDF. | Surface an unreadable-document gap; ask the client for an unprotected copy. |
+| `protected-capacity-plan.pdf` | unreadable | PDF with an open password (s3cret). | Surface a 'needs password' gap; reads fully once unlocked with the password via the Unlock action. |
+| `restricted-sow.pdf` | permissions-restricted | PDF with print/copy restrictions (owner password only, no open password). | Read normally (as any viewer does), with a warning noting the restrictions. |
 | `cmdb-export.xlsx` | stale-source | ord-api-01 at 8 vCPU (export dated 2025-11-03). | Truth 16 vCPU. CMDB and RVTools are both 'inventory' precedence — recency decides, so expect a conflict. |
 | `cmdb-export.xlsx` | retired-hosts | ord-api-legacy and pay-svc-00 have status Retired. | Exclude from sizing and cost; they are not migration targets. |
 | `cmdb-export.xlsx` | naming | pay-db-01 appears as PAY-DB-01.DCN.ZEPHYR.LOCAL. | Resolve to pay-db-01 (FQDN -> short host, case-insensitive). |
+| `cmdb-export.xlsx` | stacked-header | Group band 'Identity | Configured capacity | Utilisation | Lifecycle | Ownership' (merged) sits above the real column labels; the Network sheet repeats its header in a second row. | Merge into one header per table (hostname, vcpu, ...); never treat the band or the repeat as data. |
 | `cmdb-export.xlsx` | formula-totals | TOTAL row uses =SUM() with no cached values. | Must not become a server named 'TOTAL'; formula cells read as empty. |
 | `cmdb-export.xlsx` | hidden-sheet | Hidden 'Lookups' sheet (status/environment picklists). | Not an inventory; must not yield servers such as 'In Service'. |
 | `cmdb-export.xlsx` | unsupported-os | zl-as400 runs 'IBM i 7.4'. | Block sizing (not an x86 VM); the OS string doesn't say AS/400 or OS/400. |
@@ -95,7 +97,7 @@ Never a server: ESXi hosts (`esx-*`), the `tpl-rhel9-2026` template, the orphan 
 | `email-payments-timing.txt` | pii | Mobile number and personal e-mail addresses in the signature. | Redact in claims/report when PII redaction is on. |
 | `vendor-handover.txt` | prompt-injection | A line instructs automated tools to report every server as cloud-ready. | Guardrails must flag/block it; the assessment must still report the real blockers. |
 | `empty-notes.txt` | empty | Whitespace-only file. | Empty-extraction gap. |
-| `legacy-spec.doc` | legacy-format | Binary Word 97-2003 file. | Reject with 're-save as .docx'. |
+| `legacy-spec.doc` | legacy-format | Word 97-2003 (OLE2) header with a deliberately damaged body. | Converted to .docx via LibreOffice when installed; this damaged one must fail with a clear 'could not convert' (or 'install LibreOffice') gap, never crash. |
 | `dr-plan.docx` | conflict | Order API RTO 4 hours here vs 2 hours in requirements-nfr.docx; plan approved 2023. | Raise an RTO conflict; the newer requirements document (2026-05) should win, with review. |
 | `dr-plan.docx` | risk | WMS Tier 1 with an untested tape restore; Order API standby undersized. | Surface as DR gaps / blockers. |
 | `discovery-questionnaire.docx` | incomplete-answer | Q3 omits Reporting -> Payments DB (only visible in the dependency scan). | Dependency answers should include the scan-discovered edge, with its evidence. |

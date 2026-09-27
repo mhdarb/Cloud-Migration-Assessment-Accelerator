@@ -488,7 +488,13 @@ def chunk_inventory_rows(
             )
             continue
         header = lines[idx]
-        data_lines = lines[idx + 1 :]
+        # `# NOTE:` lines (excluded totals, truncation, notes under the table) describe the
+        # table; they are not rows. Carry them in the caption every chunk repeats, so they
+        # never inflate row counts or the computed summary.
+        notes = [line.lstrip("# ").strip() for line in lines[idx + 1 :] if line.startswith("#")]
+        data_lines = [line for line in lines[idx + 1 :] if not line.startswith("#")]
+        if notes:
+            title = " / ".join(filter(None, [title, *notes]))
         if not data_lines:
             pieces.append(
                 ChunkPiece(page=page.page, offset_start=0, offset_end=len(text), text=text)

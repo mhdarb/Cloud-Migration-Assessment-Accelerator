@@ -136,18 +136,22 @@ def parse_file(path: str, filename: str) -> ParseResult:
 
     if suffix == ".pdf":
         result = _parse_pdf(path, settings)
-    elif suffix == ".docx":
-        result = _parse_docx(path)
-    elif suffix == ".doc":
-        # A true .doc (OLE2) can't be read by python-docx; some tools also mislabel a
-        # .docx as .doc, so sniff the magic bytes rather than assuming.
+    elif suffix in {".doc", ".docx"}:
+        # Sniff the bytes rather than trusting the extension: a legacy Word 97-2003 file is
+        # an OLE2 container (and tools mislabel .docx as .doc and vice versa).
         if _is_ole2(path):
-            raise ValueError(
-                "legacy binary .doc format is not supported; re-save as .docx (or PDF) and re-upload"
-            )
-        result = _parse_docx(path)
+            docx_path, note = _modernize(path, "docx", ".doc")
+            result = _parse_docx(docx_path)
+            result.warnings.append(note)
+        else:
+            result = _parse_docx(path)
     elif suffix in {".xlsx", ".xls", ".xlsm"}:
-        result = _parse_xlsx(path, settings)
+        if _is_ole2(path):
+            xlsx_path, note = _modernize(path, "xlsx", ".xls")
+            result = _parse_xlsx(xlsx_path, settings)
+            result.warnings.append(note)
+        else:
+            result = _parse_xlsx(path, settings)
     elif suffix == ".csv":
         result = _parse_csv(path)
     elif suffix == ".json":
@@ -178,6 +182,23 @@ def parse_file(path: str, filename: str) -> ParseResult:
 def _read_text_file(path: str) -> str:
     """Decode a text file defensively: honor a UTF-8 BOM, never raise on a stray byte."""
     return Path(path).read_text(encoding="utf-8-sig", errors="replace")
+
+
+class EncryptedDocument(ValueError):
+    """The file needs its open password before any text can be read from it."""
+
+
+def _modernize(path: str, target_ext: str, kind: str) -> tuple[str, str]:
+    """Convert a legacy OLE2 Office file to its modern format; (new path, warning note)."""
+    from app.services.converters import convert_legacy_office, is_encrypted_office_file
+
+    if is_encrypted_office_file(path):
+        raise EncryptedDocument(
+            "password-protected Office document: remove the password (File > Info > Protect) "
+            "and re-upload"
+        )
+    converted = convert_legacy_office(path, target_ext, kind=kind)
+    return converted, f"Converted legacy {kind} (Office 97-2003) to .{target_ext} with LibreOffice before reading."
 
 
 def _is_ole2(path: str) -> bool:
@@ -234,19 +255,50 @@ def _flag_empty_extraction(result: ParseResult, filename: str, suffix: str, sett
         )
 
 
+def _pdf_encryption(path: str) -> str:
+    """"none", "restricted" (owner password only — opens without a password, with
+    print/copy restrictions) or "locked" (needs the open/user password)."""
+    try:
+        reader = PdfReader(path)
+        if not reader.is_encrypted:
+            return "none"
+        return "restricted" if reader.decrypt("") else "locked"
+    except Exception:
+        return "none"  # let the real parse report whatever is wrong with the file
+
+
 def _parse_pdf(path: str, settings) -> ParseResult:
     """Prefer `pdfplumber` (structured tables + OCR-able page images) when it's installed
     and enabled; fall back to plain `pypdf` text extraction otherwise. Both paths honor
-    the page cap and never raise on a single bad page."""
+    the page cap and never raise on a single bad page.
+
+    Encryption: a PDF with only an *owner* password (print/copy restrictions) opens with
+    an empty password, as in any PDF viewer, and is read normally. One with an *open*
+    password can't be read by anything without that password; it raises
+    `EncryptedDocument`, and the user can supply the password via the document's Unlock
+    action (`assessment_service.unlock_document`)."""
+    encryption = _pdf_encryption(path)
+    if encryption == "locked":
+        raise EncryptedDocument(
+            "password-protected PDF: it needs its open password — use Unlock on the document "
+            "to supply it, or upload an unprotected copy"
+        )
+    result: ParseResult | None = None
     if settings.pdf_table_extraction or settings.ocr_enabled:
-        plumbed = _parse_pdf_plumber(path, settings)
-        if plumbed is not None:
-            return plumbed
-    return _parse_pdf_pypdf(path, settings)
+        result = _parse_pdf_plumber(path, settings)
+    if result is None:
+        result = _parse_pdf_pypdf(path, settings)
+    if encryption == "restricted":
+        result.warnings.append(
+            "PDF has permission restrictions (owner password); it was read without an open password."
+        )
+    return result
 
 
 def _parse_pdf_pypdf(path: str, settings) -> ParseResult:
     reader = PdfReader(path)
+    if reader.is_encrypted:
+        reader.decrypt("")  # owner-password-only PDFs open with an empty user password
     pages = []
     for i, page in enumerate(reader.pages, start=1):
         if i > settings.max_pages_per_doc:
@@ -592,26 +644,187 @@ def _detect_header_row(rows: list[list[str]]) -> int:
     return 0
 
 
+_TOTAL_ROW = re.compile(r"^\s*(grand\s+)?(sub[\s-]?)?totals?\b|^\s*(sum|overall)\s*$", re.I)
+_MAX_STACKED_HEADER_ROWS = 3
+
+
+def _numeric_cells(row: list[str]) -> int:
+    return sum(1 for c in row if _looks_numeric(c))
+
+
+def _is_header_like(row: list[str]) -> bool:
+    cells = [c for c in row if c.strip()]
+    return len(cells) >= 2 and not any(_looks_numeric(c) for c in cells)
+
+
+def _is_group_row(row: list[str]) -> bool:
+    """A band of group labels over the real header ("Capacity" spanning vCPU | Memory):
+    sparse when merged cells are read as one value plus blanks, or runs of one repeated
+    value once merged ranges have been expanded."""
+    cells = [c.strip() for c in row]
+    filled = [c for c in cells if c]
+    if not filled:
+        return False
+    if len(filled) < 0.75 * len(cells):
+        return True
+    return any(a and a == b for a, b in zip(cells, cells[1:], strict=False))
+
+
+def _norm_label(cell: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", cell.lower())
+
+
+@dataclass
+class _Table:
+    preamble: list[str]
+    header: list[str]
+    rows: list[list[str]]
+    notes: list[str]
+
+
+def _normalize_table(raw_rows: list[list[str]]) -> _Table:
+    """Find the real header of a spreadsheet-shaped table and clean the body around it.
+
+    Real exports rarely have "row 1 = header, rows 2..n = data". This handles:
+      - title bands / blank rows above the header (folded into a preamble);
+      - stacked headers: a group band over the column labels ("Capacity" over
+        "vCPU | Memory"), or the header restated underneath ("device | mgmt_ip" then
+        "Device | Management IP") — merged into ONE header row;
+      - the header repeated inside the data (page-break repeats in printed exports);
+      - TOTAL / subtotal / grand-total rows (excluded from the rows, noted);
+      - free-text notes under the table (moved out of the rows into notes).
+    """
+    header_idx = _detect_header_row(raw_rows)
+    preamble = [" ".join(c.strip() for c in r if c.strip()) for r in raw_rows[:header_idx]]
+    header_rows = [raw_rows[header_idx]]
+    j = header_idx + 1
+    # Further header rows follow while a row is label-only and the row after it looks
+    # more like data than it does (so an all-text data table isn't swallowed).
+    while (
+        j + 1 < len(raw_rows)
+        and len(header_rows) < _MAX_STACKED_HEADER_ROWS
+        and _is_header_like(raw_rows[j])
+        and _numeric_cells(raw_rows[j + 1]) > _numeric_cells(raw_rows[j])
+    ):
+        header_rows.append(raw_rows[j])
+        j += 1
+    header = _merge_header_rows(header_rows)
+
+    header_keys = {tuple(_norm_label(c) for c in r) for r in header_rows}
+    header_keys.add(tuple(_norm_label(c) for c in header))
+    rows: list[list[str]] = []
+    notes: list[str] = []
+    totals = repeats = 0
+    for r in raw_rows[j:]:
+        first = next((c.strip() for c in r if c.strip()), "")
+        if tuple(_norm_label(c) for c in r) in header_keys:
+            repeats += 1
+            continue
+        if _TOTAL_ROW.match(first):
+            totals += 1
+            continue
+        rows.append(r)
+    # Trailing single-cell prose under the table is a note, not a record.
+    while rows:
+        filled = [c.strip() for c in rows[-1] if c.strip()]
+        if len(filled) == 1 and len(filled[0].split()) >= 4 and not _looks_numeric(filled[0]):
+            notes.insert(0, filled[0])
+            rows.pop()
+        else:
+            break
+    if totals:
+        notes.append(f"{totals} total/subtotal row(s) excluded from the table")
+    if repeats:
+        notes.append(f"{repeats} repeated header row(s) removed")
+    return _Table([p for p in preamble if p], header, rows, notes)
+
+
+def _merge_header_rows(header_rows: list[list[str]]) -> list[str]:
+    if len(header_rows) == 1:
+        return _forward_fill_header(header_rows[0])
+    width = max(len(r) for r in header_rows)
+    padded = [r + [""] * (width - len(r)) for r in header_rows]
+    groups = [_forward_fill_header(r) for r in padded if _is_group_row(r)]
+    labels = [r for r in padded if not _is_group_row(r)] or [padded[-1]]
+    merged: list[str] = []
+    for col in range(width):
+        # Restated headers: several rows label the same column; prefer the label that maps
+        # to a known infrastructure field, else the first.
+        options = [r[col].strip() for r in labels if r[col].strip()]
+        known = [o for o in options if _canonical_field(o)]
+        merged.append((known or options or [""])[0])
+    # Group labels only disambiguate: "Avg" under both CPU and Memory -> "CPU Avg".
+    counts = {m: merged.count(m) for m in merged}
+    for col, leaf in enumerate(merged):
+        group = next((g[col] for g in groups if col < len(g) and g[col].strip()), "")
+        if not leaf:
+            merged[col] = group
+        elif counts[leaf] > 1 and group and group != leaf:
+            merged[col] = f"{group} {leaf}"
+    return merged
+
+
+def _canonical_field(label: str) -> bool:
+    from app.services.normalization import INFRA_COLUMN_ALIASES, canonical_header
+
+    return canonical_header(label) in INFRA_COLUMN_ALIASES
+
+
 def _sheet_text(sheet_name: str, raw_rows: list[list[str]], truncated: bool, settings) -> str:
     """Turn a sheet's non-empty rows into the pipe-delimited page text the inventory
     chunker expects: one `# Sheet:` title line (a preamble/title band folded into it),
-    then the detected header (merged header cells forward-filled), then data rows."""
+    then ONE clean header row, then data rows, then `# NOTE:` lines (excluded totals,
+    notes that sat under the table)."""
     title = f"# Sheet: {sheet_name}"
     body_lines: list[str] = []
+    notes: list[str] = []
     if raw_rows:
-        header_idx = _detect_header_row(raw_rows)
-        preamble = [" ".join(c for c in r if c.strip()) for r in raw_rows[:header_idx]]
-        preamble = [p for p in preamble if p]
-        if preamble:
-            title = f"{title} | {' / '.join(preamble)}"
-        header = _forward_fill_header(raw_rows[header_idx])
-        body_lines.append(" | ".join(header))
-        for r in raw_rows[header_idx + 1 :]:
-            body_lines.append(" | ".join(r))
-    text = "\n".join([title, *body_lines])
+        table = _normalize_table(raw_rows)
+        if table.preamble:
+            title = f"{title} | {' / '.join(table.preamble)}"
+        body_lines.append(" | ".join(table.header))
+        body_lines.extend(" | ".join(r) for r in table.rows)
+        notes = table.notes
+    text = "\n".join([title, *body_lines, *(f"# NOTE: {n}" for n in notes)])
     if truncated:
         text += f"\n# NOTE: sheet truncated at {settings.max_rows_per_sheet} rows (MAX_ROWS_PER_SHEET)"
     return text
+
+
+def _sheet_is_hidden(ws: Any) -> bool:
+    return getattr(ws, "sheet_state", "visible") != "visible"
+
+
+def _hidden_sheet_warning(names: list[str]) -> str:
+    listed = ", ".join(f"'{n}'" for n in names)
+    return (
+        f"Hidden sheet(s) {listed} skipped (usually lookups/picklists); set "
+        "XLSX_INCLUDE_HIDDEN_SHEETS=true to read them."
+    )
+
+
+def _uncached_formula_warnings(path: str) -> list[str]:
+    """Formula cells whose result was never saved read as empty with data_only=True —
+    typical of workbooks generated by a script or exported by a tool, not saved in Excel.
+    Count them so the missing values are visible rather than silently blank."""
+    try:
+        formulas = load_workbook(path, data_only=False)
+        values = load_workbook(path, data_only=True)
+    except Exception:
+        return []
+    warnings = []
+    for name in formulas.sheetnames:
+        missing = 0
+        for f_row, v_row in zip(formulas[name].iter_rows(), values[name].iter_rows(), strict=False):
+            for f_cell, v_cell in zip(f_row, v_row, strict=False):
+                if isinstance(f_cell.value, str) and f_cell.value.startswith("=") and v_cell.value is None:
+                    missing += 1
+        if missing:
+            warnings.append(
+                f"Sheet '{name}' has {missing} formula cell(s) with no saved result (file not last "
+                "saved by Excel); those values are blank — open and re-save it in Excel to include them."
+            )
+    return warnings
 
 
 def _parse_xlsx(path: str, settings) -> ParseResult:
@@ -633,8 +846,12 @@ def _parse_xlsx(path: str, settings) -> ParseResult:
 def _parse_xlsx_streaming(path: str, settings) -> ParseResult:
     wb = load_workbook(path, data_only=True, read_only=True)
     pages = []
+    hidden: list[str] = []
     for idx, sheet_name in enumerate(wb.sheetnames, start=1):
         ws = wb[sheet_name]
+        if _sheet_is_hidden(ws) and not settings.xlsx_include_hidden_sheets:
+            hidden.append(sheet_name)
+            continue
         raw_rows: list[list[str]] = []
         truncated = False
         for row in ws.iter_rows(values_only=True):
@@ -652,14 +869,21 @@ def _parse_xlsx_streaming(path: str, settings) -> ParseResult:
             )
         )
     wb.close()
-    return ParseResult(pages=pages, page_count=len(pages))
+    result = ParseResult(pages=pages, page_count=len(pages))
+    if hidden:
+        result.warnings.append(_hidden_sheet_warning(hidden))
+    return result
 
 
 def _parse_xlsx_full(path: str, settings) -> ParseResult:
     wb = load_workbook(path, data_only=True)
     pages = []
+    hidden: list[str] = []
     for idx, sheet_name in enumerate(wb.sheetnames, start=1):
         ws = wb[sheet_name]
+        if _sheet_is_hidden(ws) and not settings.xlsx_include_hidden_sheets:
+            hidden.append(sheet_name)
+            continue
         matrix: list[list] = [list(row) for row in ws.iter_rows(values_only=True)]
         # Expand every merged range: openpyxl reports the value only in the top-left anchor
         # cell and None for the rest, so fill the whole rectangle with the anchor value.
@@ -691,7 +915,11 @@ def _parse_xlsx_full(path: str, settings) -> ParseResult:
             )
         )
     wb.close()
-    return ParseResult(pages=pages, page_count=len(pages))
+    result = ParseResult(pages=pages, page_count=len(pages))
+    if hidden:
+        result.warnings.append(_hidden_sheet_warning(hidden))
+    result.warnings.extend(_uncached_formula_warnings(path))
+    return result
 
 
 def _parse_csv(path: str) -> ParseResult:

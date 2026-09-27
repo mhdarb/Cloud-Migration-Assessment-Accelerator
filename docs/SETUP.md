@@ -207,6 +207,32 @@ AZURE_OPENAI_EMBEDDING_DEPLOYMENT=text-embedding-3-small
 
 ---
 
+## Optional: legacy `.doc` / `.xls` conversion (LibreOffice)
+
+Word and Excel 97-2003 files are converted to `.docx` / `.xlsx` with headless LibreOffice
+before they're read (tables and merged cells survive). Without LibreOffice they're reported
+as a gap on the document ("needs LibreOffice to convert it").
+
+```bash
+brew install --cask libreoffice                                   # macOS
+sudo apt-get install -y libreoffice-writer-nogui libreoffice-calc-nogui   # Debian/Ubuntu or a container image
+```
+
+`soffice` is auto-detected; set `LIBREOFFICE_PATH` if it lives elsewhere and
+`OFFICE_CONVERSION_TIMEOUT_SECONDS` (default 120) for very large files. For the Azure
+container, add the `apt-get` line to the API image.
+
+## Password-protected documents
+
+- **PDFs with print/copy restrictions only** (an owner password, no open password) are read
+  automatically, like any PDF viewer does, with a note on the document.
+- **PDFs with an open password** show **Unlock** on the Overview tab. The password is used
+  once to save a decrypted copy (the pipeline then re-runs); it is never stored or logged.
+- **Password-protected Word/Excel files** are reported as such: remove the password in
+  Office (File > Info > Protect) and re-upload.
+
+---
+
 ## Troubleshooting
 
 

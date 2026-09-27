@@ -1022,8 +1022,14 @@
     {
       "file": "protected-capacity-plan.pdf",
       "kind": "unreadable",
-      "detail": "Password-protected PDF.",
-      "expected_handling": "Surface an unreadable-document gap; ask the client for an unprotected copy."
+      "detail": "PDF with an open password (s3cret).",
+      "expected_handling": "Surface a 'needs password' gap; reads fully once unlocked with the password via the Unlock action."
+    },
+    {
+      "file": "restricted-sow.pdf",
+      "kind": "permissions-restricted",
+      "detail": "PDF with print/copy restrictions (owner password only, no open password).",
+      "expected_handling": "Read normally (as any viewer does), with a warning noting the restrictions."
     },
     {
       "file": "cmdb-export.xlsx",
@@ -1042,6 +1048,12 @@
       "kind": "naming",
       "detail": "pay-db-01 appears as PAY-DB-01.DCN.ZEPHYR.LOCAL.",
       "expected_handling": "Resolve to pay-db-01 (FQDN -> short host, case-insensitive)."
+    },
+    {
+      "file": "cmdb-export.xlsx",
+      "kind": "stacked-header",
+      "detail": "Group band 'Identity | Configured capacity | Utilisation | Lifecycle | Ownership' (merged) sits above the real column labels; the Network sheet repeats its header in a second row.",
+      "expected_handling": "Merge into one header per table (hostname, vcpu, ...); never treat the band or the repeat as data."
     },
     {
       "file": "cmdb-export.xlsx",
@@ -1226,8 +1238,8 @@
     {
       "file": "legacy-spec.doc",
       "kind": "legacy-format",
-      "detail": "Binary Word 97-2003 file.",
-      "expected_handling": "Reject with 're-save as .docx'."
+      "detail": "Word 97-2003 (OLE2) header with a deliberately damaged body.",
+      "expected_handling": "Converted to .docx via LibreOffice when installed; this damaged one must fail with a clear 'could not convert' (or 'install LibreOffice') gap, never crash."
     },
     {
       "file": "dr-plan.docx",

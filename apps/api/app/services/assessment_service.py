@@ -94,6 +94,9 @@ def assessment_out(assessment: Assessment) -> AssessmentOut:
                 precedence=d.precedence,
                 page_count=d.page_count,
                 created_at=d.created_at,
+                parse_error=(d.parse_summary or {}).get("parse_error"),
+                needs_password=bool((d.parse_summary or {}).get("needs_password")),
+                warnings=list((d.parse_summary or {}).get("warnings") or []),
             )
             for d in assessment.documents
         ],
@@ -163,6 +166,54 @@ def remove_document(
         storage_path.unlink(missing_ok=True)
     db.refresh(assessment)
     return assessment, remaining > 0
+
+
+class WrongPassword(ValueError):
+    pass
+
+
+def unlock_document(db: Session, assessment: Assessment, document_id: str, password: str) -> Assessment:
+    """Decrypt a password-protected PDF with the password the user supplies, once.
+
+    The decrypted copy replaces the stored file, so every later pipeline run reads it
+    without the password. The password itself is never stored or logged. (The PDF's text
+    ends up in chunks and the vector index anyway once it is read, so keeping the
+    decrypted file in the same protected storage doesn't widen exposure.)
+    """
+    from pypdf import PdfReader, PdfWriter
+
+    from app.services.pipeline_lock import is_in_flight
+
+    if is_in_flight(assessment):
+        raise PipelineBusy()
+    document = (
+        db.query(Document)
+        .filter(Document.id == document_id, Document.assessment_id == assessment.id)
+        .one_or_none()
+    )
+    if not document:
+        raise DocumentNotFound(document_id)
+    source = Path(document.storage_path)
+    if source.suffix.lower() != ".pdf":
+        raise ValueError("Only PDF files can be unlocked here; remove the password in Office and re-upload")
+    reader = PdfReader(str(source))
+    if not reader.is_encrypted:
+        raise ValueError("This document isn't password-protected")
+    if not reader.decrypt(password):
+        raise WrongPassword("That password didn't open the document")
+    writer = PdfWriter(clone_from=reader)
+    unlocked = source.with_name(f"{source.stem}.unlocked.pdf")
+    with unlocked.open("wb") as handle:
+        writer.write(handle)
+    document.storage_path = str(unlocked)
+    summary = dict(document.parse_summary or {})
+    summary.pop("parse_error", None)
+    summary.pop("needs_password", None)
+    document.parse_summary = summary
+    db.commit()
+    source.unlink(missing_ok=True)
+    db.refresh(assessment)
+    return assessment
 
 
 def create_assessment(db: Session, name: str) -> Assessment:

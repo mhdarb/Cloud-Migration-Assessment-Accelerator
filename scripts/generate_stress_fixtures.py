@@ -676,8 +676,44 @@ def write_encrypted_pdf() -> None:
     trap(
         "protected-capacity-plan.pdf",
         "unreadable",
-        "Password-protected PDF.",
-        "Surface an unreadable-document gap; ask the client for an unprotected copy.",
+        "PDF with an open password (s3cret).",
+        "Surface a 'needs password' gap; reads fully once unlocked with the password via the Unlock action.",
+    )
+
+
+def write_restricted_pdf() -> None:
+    """A statement of work with print/copy *restrictions* (owner password only) — very
+    common for PDFs sent by vendors and legal. Opens without a password in any viewer."""
+    from pypdf import PdfReader, PdfWriter
+    from reportlab.lib.pagesizes import letter
+    from reportlab.pdfgen import canvas
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=letter)
+    c.setFont("Helvetica-Bold", 13)
+    c.drawString(72, 720, "Northwind Managed Services — Statement of Work (extract)")
+    c.setFont("Helvetica", 11)
+    for i, line in enumerate(
+        [
+            "Service window: 24x7 for Tier 1 (Order API, Payments, WMS); 8x5 for Tier 3.",
+            "Exit clause: 90 days' notice; knowledge transfer included for the Azure migration.",
+            "Backups: nightly Veeam for CL-PROD-N and CL-PROD-S; pgBackRest for pay-db-01.",
+        ]
+    ):
+        c.drawString(72, 690 - 20 * i, line)
+    c.showPage()
+    c.save()
+    buf.seek(0)
+    writer = PdfWriter(clone_from=PdfReader(buf))
+    # Empty user password + owner password with printing/copying disallowed.
+    writer.encrypt(user_password="", owner_password="northwind-owner", permissions_flag=0)
+    with open(OUT / "restricted-sow.pdf", "wb") as handle:
+        writer.write(handle)
+    trap(
+        "restricted-sow.pdf",
+        "permissions-restricted",
+        "PDF with print/copy restrictions (owner password only, no open password).",
+        "Read normally (as any viewer does), with a warning noting the restrictions.",
     )
 
 
@@ -716,8 +752,8 @@ def write_scanned_pdf() -> None:
 # Spreadsheets
 # =========================================================================== #
 def write_cmdb_xlsx() -> None:
-    """ServiceNow-style CMDB export, 10 months stale. Title band + blank row above the
-    header, merged Datacenter cells, retired hosts, mixed-case FQDNs, owner e-mails, a
+    """ServiceNow-style CMDB export, 10 months stale. Title band + blank row + a merged
+    group band (stacked header) above the column labels, merged Datacenter cells, retired hosts, mixed-case FQDNs, owner e-mails, a
     formula totals row with no cached values, a hidden lookup sheet, and a Network sheet
     with a repeated second header row."""
     from openpyxl import Workbook
@@ -727,6 +763,14 @@ def write_cmdb_xlsx() -> None:
     ws.title = "Servers"
     ws.append(["Zephyr Logistics — CMDB Export (Q3) · extracted 2025-11-03 by svc-cmdb-sync"])
     ws.append([])
+    # Stacked header: a merged group band over the column labels, as ServiceNow/Excel
+    # report templates produce.
+    ws.append(
+        ["Identity", None, None, "Configured capacity", None, None, "Utilisation", "Lifecycle", None, "Ownership"]
+    )
+    ws.merge_cells("A3:C3")
+    ws.merge_cells("D3:F3")
+    ws.merge_cells("H3:I3")
     ws.append(
         [
             "hostname",
@@ -760,7 +804,7 @@ def write_cmdb_xlsx() -> None:
         "payments": "tom.becker@zephyr-logistics.example",
         "fleet-tracker": "ana.silva@zephyr-logistics.example",
     }
-    first_row = 4
+    first_row = 5
     for block in (rows_north, rows_south):
         start = ws.max_row + 1
         for name in block:
@@ -833,6 +877,13 @@ def write_cmdb_xlsx() -> None:
         "naming",
         "pay-db-01 appears as PAY-DB-01.DCN.ZEPHYR.LOCAL.",
         "Resolve to pay-db-01 (FQDN -> short host, case-insensitive).",
+    )
+    trap(
+        "cmdb-export.xlsx",
+        "stacked-header",
+        "Group band 'Identity | Configured capacity | Utilisation | Lifecycle | Ownership' (merged) "
+        "sits above the real column labels; the Network sheet repeats its header in a second row.",
+        "Merge into one header per table (hostname, vcpu, ...); never treat the band or the repeat as data.",
     )
     trap(
         "cmdb-export.xlsx",
@@ -1632,7 +1683,13 @@ def write_empty_txt() -> None:
 def write_legacy_doc() -> None:
     ole2 = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
     (OUT / "legacy-spec.doc").write_bytes(ole2 + b"\x00" * 512)
-    trap("legacy-spec.doc", "legacy-format", "Binary Word 97-2003 file.", "Reject with 're-save as .docx'.")
+    trap(
+        "legacy-spec.doc",
+        "legacy-format",
+        "Word 97-2003 (OLE2) header with a deliberately damaged body.",
+        "Converted to .docx via LibreOffice when installed; this damaged one must fail with a clear "
+        "'could not convert' (or 'install LibreOffice') gap, never crash.",
+    )
 
 
 # =========================================================================== #
@@ -2005,11 +2062,12 @@ def write_readme() -> None:
         ("capacity-report.pdf", "PDF", "Two-column capacity report (reading-order reflow)"),
         ("rack-layout.pdf", "PDF", "Borderless rack sheet; the only view of physical boxes"),
         ("scanned-runbook.pdf", "PDF", "Image-only scan → empty-extraction gap / OCR"),
-        ("protected-capacity-plan.pdf", "PDF", "Password-protected → unreadable-document gap"),
+        ("protected-capacity-plan.pdf", "PDF", "Open password → 'needs password' gap; Unlock with `s3cret`"),
+        ("restricted-sow.pdf", "PDF", "Print/copy-restricted (owner password only) → reads normally"),
         (
             "cmdb-export.xlsx",
             "XLSX",
-            "Stale CMDB: merged cells, retired hosts, formula totals, hidden sheet, repeated header",
+            "Stale CMDB: stacked group header, merged cells, retired hosts, formula totals, hidden sheet",
         ),
         ("rvtools-export.xlsx", "XLSX", "vCenter export: MB units, display-name drift, templates, ESXi hosts"),
         ("integration-register.xlsx", "XLSX", "Interface register — tabular but not a server list"),
@@ -2031,7 +2089,11 @@ def write_readme() -> None:
         ("dr-plan.docx", "DOCX", "DR plan (2023): RTO disagrees with the NFR pack; failed test"),
         ("discovery-questionnaire.docx", "DOCX", "Q/A pairs (misses the scan-found dependency)"),
         ("app-portfolio.zip", "ZIP", "Node/Python/.NET/Java + node_modules, .git, committed secrets"),
-        ("legacy-spec.doc", "OLE2", "Legacy binary .doc → rejection"),
+        (
+            "legacy-spec.doc",
+            "OLE2",
+            "Legacy binary .doc → converted with LibreOffice when installed; this one is damaged on purpose",
+        ),
     ]
     body = "\n".join(f"| `{name}` | {fmt} | {what} |" for name, fmt, what in files)
     (OUT / "README.md").write_text(
@@ -2077,6 +2139,7 @@ def main() -> None:
         write_borderless_pdf,
         write_scanned_pdf,
         write_encrypted_pdf,
+        write_restricted_pdf,
         write_cmdb_xlsx,
         write_rvtools_xlsx,
         write_integration_register_xlsx,

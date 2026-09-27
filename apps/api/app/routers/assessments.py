@@ -40,6 +40,7 @@ from app.schemas.api import (
     ReportOut,
     ReviewDecisionRequest,
     ReviewStatusOut,
+    UnlockDocumentRequest,
 )
 from app.services import assessment_service as assessments
 from app.services import questionnaires
@@ -191,6 +192,30 @@ def delete_document(
         raise HTTPException(404, "Document not found") from exc
     if rerun:
         _maybe_start_pipeline(background_tasks, assessment, db)
+    return assessments.assessment_out(assessment)
+
+
+@router.post("/{assessment_id}/documents/{document_id}/unlock", response_model=AssessmentOut)
+def unlock_document(
+    assessment_id: str,
+    document_id: str,
+    body: UnlockDocumentRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> AssessmentOut:
+    """Supply the open password of a protected PDF; the pipeline re-runs to read it."""
+    assessment = _assessment(db, assessment_id)
+    try:
+        assessment = assessments.unlock_document(db, assessment, document_id, body.password)
+    except assessments.PipelineBusy as exc:
+        raise HTTPException(409, "Pipeline is already running for this assessment") from exc
+    except assessments.DocumentNotFound as exc:
+        raise HTTPException(404, "Document not found") from exc
+    except assessments.WrongPassword as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    _maybe_start_pipeline(background_tasks, assessment, db)
     return assessments.assessment_out(assessment)
 
 

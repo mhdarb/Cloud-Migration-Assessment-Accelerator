@@ -44,8 +44,17 @@ class DocumentOut(BaseModel):
     precedence: int
     page_count: int | None = None
     created_at: datetime
+    # From the last ingest: why the file couldn't be read, whether supplying its password
+    # would fix that, and non-fatal notes (converted from .doc, hidden sheet skipped, ...).
+    parse_error: str | None = None
+    needs_password: bool = False
+    warnings: list[str] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
+
+
+class UnlockDocumentRequest(BaseModel):
+    password: str = Field(min_length=1, max_length=512)
 
 
 class AssessmentOut(_PipelineTiming):

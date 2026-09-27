@@ -21,8 +21,9 @@ python scripts/score_stress_estate.py --real   # configured LLM, e.g. Azure Open
 | `capacity-report.pdf` | PDF | Two-column capacity report (reading-order reflow) |
 | `rack-layout.pdf` | PDF | Borderless rack sheet; the only view of physical boxes |
 | `scanned-runbook.pdf` | PDF | Image-only scan → empty-extraction gap / OCR |
-| `protected-capacity-plan.pdf` | PDF | Password-protected → unreadable-document gap |
-| `cmdb-export.xlsx` | XLSX | Stale CMDB: merged cells, retired hosts, formula totals, hidden sheet, repeated header |
+| `protected-capacity-plan.pdf` | PDF | Open password → 'needs password' gap; Unlock with `s3cret` |
+| `restricted-sow.pdf` | PDF | Print/copy-restricted (owner password only) → reads normally |
+| `cmdb-export.xlsx` | XLSX | Stale CMDB: stacked group header, merged cells, retired hosts, formula totals, hidden sheet |
 | `rvtools-export.xlsx` | XLSX | vCenter export: MB units, display-name drift, templates, ESXi hosts |
 | `integration-register.xlsx` | XLSX | Interface register — tabular but not a server list |
 | `cost-baseline.xlsx` | XLSX | EUR run-cost baseline with formulas — numeric but not a server list |
@@ -43,7 +44,7 @@ python scripts/score_stress_estate.py --real   # configured LLM, e.g. Azure Open
 | `dr-plan.docx` | DOCX | DR plan (2023): RTO disagrees with the NFR pack; failed test |
 | `discovery-questionnaire.docx` | DOCX | Q/A pairs (misses the scan-found dependency) |
 | `app-portfolio.zip` | ZIP | Node/Python/.NET/Java + node_modules, .git, committed secrets |
-| `legacy-spec.doc` | OLE2 | Legacy binary .doc → rejection |
+| `legacy-spec.doc` | OLE2 | Legacy binary .doc → converted with LibreOffice when installed; this one is damaged on purpose |
 
 Regenerate (deterministic) with:
 
