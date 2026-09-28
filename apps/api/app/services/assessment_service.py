@@ -23,7 +23,7 @@ from app.models.entities import (
     WorkflowStage,
 )
 from app.schemas.api import AssessmentOut, DocumentOut, EntityOut
-from app.services.assessment_questions import cached_assessment_answers, persist_ad_hoc_question
+from app.services.assessment_questions import answer_added_question, persist_ad_hoc_question
 from app.services.inventory import load_inventory
 from app.services.llm_clients import DisabledChatCompleter
 from app.services.llm_reasoning import GroundedProse
@@ -466,9 +466,8 @@ def ask_engagement_question(
     question: str,
     retriever: Retriever | None = None,
 ) -> dict:
-    persist_ad_hoc_question(db, assessment.id, question)
-    generate_report(db, assessment.id, retriever=retriever)
-    return cached_assessment_answers(db, assessment, retriever=retriever)
+    row = persist_ad_hoc_question(db, assessment.id, question)
+    return answer_added_question(db, assessment, row, retriever=retriever)
 
 
 def finish_review(

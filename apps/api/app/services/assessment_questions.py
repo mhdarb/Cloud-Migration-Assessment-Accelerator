@@ -390,9 +390,16 @@ def build_assessment_answers(
     }
 
 
-def state_fingerprint(db: Session, assessment: Assessment, *, include_questions: bool = False) -> str:
+def state_fingerprint(
+    db: Session,
+    assessment: Assessment,
+    *,
+    include_questions: bool = False,
+    exclude_question_id: str | None = None,
+) -> str:
     """Changes whenever an answer could: a new pipeline run, any review decision, and
-    (optionally) a new engagement question. Answers are a pure function of this state."""
+    (optionally) a new engagement question. Answers are a pure function of this state.
+    `exclude_question_id` gives the fingerprint as it was before that question existed."""
     count, latest = (
         db.query(func.count(ReviewDecision.id), func.max(ReviewDecision.updated_at))
         .filter(ReviewDecision.assessment_id == assessment.id)
@@ -401,11 +408,12 @@ def state_fingerprint(db: Session, assessment: Assessment, *, include_questions:
     finished = assessment.pipeline_finished_at.isoformat() if assessment.pipeline_finished_at else "-"
     parts = [finished, str(count), latest.isoformat() if latest else "-"]
     if include_questions:
-        q_count, q_latest = (
-            db.query(func.count(EngagementQuestion.id), func.max(EngagementQuestion.created_at))
-            .filter(EngagementQuestion.assessment_id == assessment.id)
-            .one()
+        query = db.query(func.count(EngagementQuestion.id), func.max(EngagementQuestion.created_at)).filter(
+            EngagementQuestion.assessment_id == assessment.id
         )
+        if exclude_question_id:
+            query = query.filter(EngagementQuestion.id != exclude_question_id)
+        q_count, q_latest = query.one()
         parts += [str(q_count), q_latest.isoformat() if q_latest else "-"]
     return "|".join(parts)
 
@@ -430,6 +438,68 @@ def cached_assessment_answers(
     assessment.answers_fingerprint = fingerprint
     db.commit()
     return result
+
+
+def answer_added_question(
+    db: Session,
+    assessment: Assessment,
+    row: EngagementQuestion,
+    *,
+    retriever: Retriever | None = None,
+    prose: GroundedProse | None = None,
+) -> dict[str, Any]:
+    """Answer ONE newly added question and merge it into the stored answers.
+
+    Asking a question used to regenerate the whole report with LLM prose (every answer
+    rewritten, plus the readiness summary) and then rebuild every answer again for the
+    Questions tab — minutes with a real LLM, for a change that only adds one answer.
+    Other answers can't change when a question is added, so when the stored answers were
+    current just before this question existed, only the new one is computed: one
+    retrieval and one small rewrite call. The report's Q&A section is updated to match
+    without touching the rest of the report.
+    """
+    current = state_fingerprint(db, assessment, include_questions=True)
+    if assessment.answers_cache is not None and assessment.answers_fingerprint == current:
+        return assessment.answers_cache  # e.g. the same question asked again
+    before = state_fingerprint(db, assessment, include_questions=True, exclude_question_id=row.id)
+    if (
+        assessment.status != PipelineStatus.completed
+        or assessment.answers_cache is None
+        or assessment.answers_fingerprint != before
+    ):
+        return cached_assessment_answers(db, assessment, retriever=retriever)  # stale: full rebuild
+
+    claims = _selected_claims(db, assessment.id)
+    answer = answer_custom_question(
+        db,
+        assessment.id,
+        question_id=row.id,
+        question=row.question,
+        origin=row.origin.value,
+        claims=claims,
+        retriever=retriever,
+        questionnaire_document_ids=_questionnaire_document_ids(db, assessment.id),
+    )
+    _attach_evidence(db, [answer], claims)
+    (prose or get_grounded_prose()).rewrite_question_answers([answer])
+
+    stored = json.loads(json.dumps(assessment.answers_cache))
+    stored["answers"] = [a for a in stored.get("answers", []) if a.get("id") != row.id]
+    stored["answers"].append(json.loads(json.dumps(answer, default=str)))
+    stored["complete"] = all(a.get("supported") for a in stored["answers"])
+    stored["review_required"] = any(a.get("needs_human_review") for a in stored["answers"])
+    assessment.answers_cache = stored
+    assessment.answers_fingerprint = current
+
+    from app.models.entities import AssessmentOutput
+
+    output = db.query(AssessmentOutput).filter(AssessmentOutput.assessment_id == assessment.id).one_or_none()
+    if output is not None:
+        report_json = dict(output.report_json or {})
+        report_json["assessment_questions"] = stored
+        output.report_json = report_json
+    db.commit()
+    return stored
 
 
 def persist_ad_hoc_question(db: Session, assessment_id: str, question: str) -> EngagementQuestion:
