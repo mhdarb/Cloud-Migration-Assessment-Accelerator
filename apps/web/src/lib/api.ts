@@ -156,6 +156,8 @@ export type Evidence = {
   /** Format-aware position, e.g. "rows 21–40", 'sheet "Servers"', "Q3", "p. 4" (PDF only). */
   locator?: string | null;
   quote: string | null;
+  /** Every passage of this source that supports the answer (answers only); `quote` is the first. */
+  quotes?: string[];
 };
 
 export type Entity = {

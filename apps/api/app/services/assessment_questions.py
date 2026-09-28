@@ -21,6 +21,7 @@ from app.models.entities import (
     ReviewDecision,
 )
 from app.services.evidence import (
+    complete_quote,
     grounded_quote_for_chunk,
     label_table_row,
     passage_terms,
@@ -418,14 +419,18 @@ def _add_edge_facts(payload: dict[str, Any], edges: list[DependencyEdge]) -> Non
     payload["edge_ids"] = [e.id for e in edges]
 
 
+MAX_QUOTES_PER_SOURCE = 4
+
+
 def _attach_evidence(db: Session, answers: list[dict[str, Any]], claims: list[Claim]) -> None:
     """Resolve each answer's evidence refs to sources, quoting what supports THIS answer.
 
-    Per answer and per cited chunk: the quote of one of the answer's own facts, when that
-    quote is really in the chunk (`grounded_quote_for_chunk`); otherwise the passage of the
-    chunk that best matches the answer's question and facts. Quotes used to be shared
-    across answers (any claim's quote for a chunk showed under every answer citing it) and
-    retrieved chunks were quoted by their first 240 characters — a title or a table header.
+    Per answer and per cited chunk, one quote for every fact of the answer that cites the
+    chunk: the fact's own quote when it's really in the chunk (`grounded_quote_for_chunk`),
+    else the chunk's passage that best matches that fact. So an answer built from two
+    facts in the same section shows both supporting sentences, not just the first. A
+    chunk no fact explains (a retrieved one) is quoted by its passage that best matches
+    the question. `quote` keeps the first quote for callers that show a single line.
     """
     evidence_by_chunk = resolve_evidence_map(db, [ref for answer in answers for ref in answer["evidence_refs"]])
     claims_by_id = {c.id: c for c in claims}
@@ -434,17 +439,20 @@ def _attach_evidence(db: Session, answers: list[dict[str, Any]], claims: list[Cl
         {e.id: e for e in db.query(DependencyEdge).filter(DependencyEdge.id.in_(edge_ids))} if edge_ids else {}
     )
     for answer in answers:
-        own_quotes: list[tuple[list[str], str]] = [
-            (c.evidence_refs or [], c.evidence_quote)
-            for cid in answer.get("claim_ids", [])
-            if (c := claims_by_id.get(cid)) is not None and c.evidence_quote
-        ]
-        own_quotes += [
-            (e.evidence_refs or [], e.evidence_quote)
-            for eid in answer.get("edge_ids", [])
-            if (e := edges_by_id.get(eid)) is not None and e.evidence_quote
-        ]
-        terms = (
+        # (refs, own quote, words describing the fact) for every fact behind this answer.
+        facts: list[tuple[list[str], str | None, set[str]]] = []
+        for cid in answer.get("claim_ids", []):
+            claim = claims_by_id.get(cid)
+            if claim is not None:
+                value = claim.override_value or claim.value or ""
+                words = passage_terms(claim.attribute.replace("_", " "), value) - _GENERIC
+                facts.append((claim.evidence_refs or [], claim.evidence_quote, words))
+        for eid in answer.get("edge_ids", []):
+            edge = edges_by_id.get(eid)
+            if edge is not None:
+                words = passage_terms(edge.source_key, edge.target_key) - _GENERIC
+                facts.append((edge.evidence_refs or [], edge.evidence_quote, words))
+        question_terms = (
             passage_terms(
                 answer["question"], *(f"{f.get('entity', '')} {f.get('value', '')}" for f in answer.get("facts", []))
             )
@@ -455,17 +463,25 @@ def _attach_evidence(db: Session, answers: list[dict[str, Any]], claims: list[Cl
             entry = evidence_by_chunk.get(ref)
             if entry is None:
                 continue
-            quote = None
-            for refs, fact_quote in own_quotes:
-                if ref in refs:
-                    quote = grounded_quote_for_chunk(entry, fact_quote)
-                    if quote:
-                        quote = label_table_row(entry.get("text", ""), quote)
-                        break
-            if quote is None:
-                passage, score = relevant_passage(entry.get("text", ""), terms)
-                quote = passage if score > 0 else None
-            evidence.append({**public_evidence_fields(entry), "quote": quote})
+            text = entry.get("text", "")
+            quotes: list[str] = []
+            for refs, own_quote, words in facts:
+                if ref not in refs:
+                    continue
+                quote = grounded_quote_for_chunk(entry, own_quote)
+                if quote:
+                    quote = label_table_row(text, complete_quote(text, quote))
+                elif words:
+                    passage, score = relevant_passage(text, words)
+                    quote = passage if score > 0 else None
+                if quote and quote not in quotes:
+                    quotes.append(quote)
+            if not quotes:
+                passage, score = relevant_passage(text, question_terms)
+                if score > 0:
+                    quotes.append(passage)
+            quotes = quotes[:MAX_QUOTES_PER_SOURCE]
+            evidence.append({**public_evidence_fields(entry), "quote": quotes[0] if quotes else None, "quotes": quotes})
         answer["evidence"] = evidence
         answer.pop("_retrieved_quotes", None)
 

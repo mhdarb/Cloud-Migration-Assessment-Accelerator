@@ -222,3 +222,64 @@ def test_a_facts_quote_is_shown_only_under_answers_that_use_that_fact(db_session
     _attach_evidence(db_session, answers, [rto, sla])
     assert answers[0]["evidence"][0]["quote"] == "RTO: 4 hours for Billing Service."
     assert answers[1]["evidence"][0]["quote"].startswith("SLA: 99.9%")
+
+
+def test_every_fact_from_the_same_source_gets_its_own_quote(db_session, assessment):
+    """An answer built from several facts in one section shows each supporting sentence —
+    including for a fact that has no quote of its own (its best-matching sentence)."""
+    security = (
+        "Security baseline.\nData residency: EU and US in-region only for payment metadata.\n"
+        "Encryption: TLS 1.2 in transit and AES-256 at rest.\nCompliance: PCI-DSS for card data."
+    )
+    doc = Document(assessment_id=assessment.id, filename="security.docx", storage_path="/tmp/s.docx")
+    db_session.add(doc)
+    db_session.flush()
+    chunk = Chunk(assessment_id=assessment.id, document_id=doc.id, chunk_index=0, text=security)
+    db_session.add(chunk)
+    db_session.commit()
+    residency = _claim(
+        "business",
+        "migration-requirements",
+        "data_residency",
+        "EU and US in-region only",
+        id="c-res",
+        refs=[chunk.id],
+        quote="Data residency: EU and US in-region only for payment metadata.",
+    )
+    encryption = _claim(
+        "business", "migration-requirements", "encryption", "TLS 1.2 and AES-256", id="c-enc", refs=[chunk.id]
+    )  # no quote of its own
+    duplicate = _claim(
+        "business",
+        "migration-requirements",
+        "data_residency",
+        "EU and US in-region",
+        id="c-res2",
+        refs=[chunk.id],
+        quote="Data residency: EU and US in-region only for payment metadata.",
+    )
+    answer = {
+        "id": "a-sec",
+        "question": "What encryption and data residency constraints apply?",
+        "claim_ids": ["c-res", "c-enc", "c-res2"],
+        "evidence_refs": [chunk.id],
+        "facts": [],
+    }
+    _attach_evidence(db_session, [answer], [residency, encryption, duplicate])
+    (cited,) = answer["evidence"]
+    assert cited["quotes"] == [
+        "Data residency: EU and US in-region only for payment metadata.",
+        "Encryption: TLS 1.2 in transit and AES-256 at rest.",
+    ]
+    assert cited["quote"] == cited["quotes"][0]  # single-quote callers keep working
+
+
+def test_clipped_fact_quotes_are_widened_to_their_line():
+    from app.services.evidence import complete_quote
+
+    text = "Compliance\nEncryption: TLS 1.2+ in transit, AES-256 at rest.\nPCI-DSS controls apply to Billing Service."
+    assert complete_quote(text, "Encryption: TLS 1") == "Encryption: TLS 1.2+ in transit, AES-256 at rest."
+    assert complete_quote(text, "PCI-DSS") == "PCI-DSS controls apply to Billing Service."
+    assert complete_quote(text, "not in the text") == "not in the text"
+    row = "Billing Service | app-bill-01 | FinanceDB | App | RHEL 8"
+    assert complete_quote(CMDB, "app-bill-01") == row  # then labelled by label_table_row

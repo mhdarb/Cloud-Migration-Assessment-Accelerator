@@ -111,9 +111,31 @@ def relevant_passage(text: str, terms: set[str], max_chars: int = 280) -> tuple[
     by_sentence = [(len(terms & passage_terms(u)), i) for i, u in enumerate(units)]
     score, index = max(by_sentence, key=lambda item: (item[0], -item[1]))
     passage = units[index]
-    if len(passage) < max_chars // 2 and index + 1 < len(units):
-        passage = f"{passage} {units[index + 1]}"
+    matched = terms & passage_terms(passage)
+    # Continue into the next sentence only when it covers something the question asks
+    # that this one doesn't — not merely because this one is short (that appended
+    # unrelated neighbours: "... AES-256 at rest. Compliance: PCI-DSS for card data.").
+    if index + 1 < len(units):
+        following = units[index + 1]
+        extra = (terms & passage_terms(following)) - matched
+        if extra and len(passage) + len(following) < max_chars:
+            passage = f"{passage} {following}"
+            score += len(extra)
     return passage[:max_chars], score
+
+
+def complete_quote(chunk_text: str, quote: str, max_chars: int = 280) -> str:
+    """Widen a clipped fact quote to the full line of the chunk it sits in. Extractors
+    store fragments ("Encryption: TLS 1" — cut at the '.' of "1.2"; "PCI-DSS"); the reader
+    needs the sentence. Lines longer than `max_chars` are left as the original quote."""
+    needle = " ".join(quote.split()).lower()
+    if not needle:
+        return quote
+    for line in (chunk_text or "").splitlines():
+        flat = " ".join(line.split())
+        if needle in flat.lower() and len(flat) <= max_chars and not flat.startswith("#"):
+            return flat
+    return quote
 
 
 def label_table_row(chunk_text: str, quote: str, max_chars: int = 280) -> str:
