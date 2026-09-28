@@ -22,7 +22,10 @@ from app.models.entities import (
 )
 from app.services.evidence import (
     grounded_quote_for_chunk,
+    label_table_row,
+    passage_terms,
     public_evidence_fields,
+    relevant_passage,
     resolve_evidence_map,
 )
 from app.services.inventory import not_rejected_edge
@@ -74,18 +77,26 @@ _HINTS: list[tuple[tuple[str, ...], set[str]]] = [
     (("gap", "blocker", "debt"), {"gap", "constraint", "tech_debt", "blocker"}),
     (("runtime", "platform", "operating"), {"os", "runtime", "framework", "architecture"}),
     (
-        ("sla", "rto", "rpo", "latency", "availab", "scale"),
+        (
+            "sla",
+            "rto",
+            "rpo",
+            "latency",
+            "availab",
+            "scale",
+            "service level",
+            "performance",
+            "recovery",
+            "non-functional",
+            "nfr",
+        ),
         {"sla", "availability", "latency", "rto", "rpo", "scalability"},
     ),
 ]
 
 
 def _selected_claims(db: Session, assessment_id: str) -> list[Claim]:
-    return (
-        db.query(Claim)
-        .filter(Claim.assessment_id == assessment_id, Claim.is_selected.is_(True))
-        .all()
-    )
+    return db.query(Claim).filter(Claim.assessment_id == assessment_id, Claim.is_selected.is_(True)).all()
 
 
 def _question_tokens(text: str) -> set[str]:
@@ -101,20 +112,169 @@ def _hinted_attributes(question: str) -> set[str]:
     return attrs
 
 
+# Words that appear in almost every assessment question/fact and so can't show that a
+# fact is about the question ("migration" matched every business:migration-requirements
+# NFR fact, whatever was asked).
+_GENERIC = {
+    "migration",
+    "migrate",
+    "service",
+    "services",
+    "application",
+    "applications",
+    "app",
+    "apps",
+    "system",
+    "systems",
+    "use",
+    "used",
+    "uses",
+    "using",
+    "current",
+    "currently",
+    "require",
+    "required",
+    "requirement",
+    "requirements",
+    "list",
+    "provide",
+    "describe",
+    "please",
+    "estate",
+}
+# Attribute names a question can ask for directly. When a question names attributes, only
+# those are answered ("RTO and RPO" -> rto, rpo; not every service-level fact).
+_ATTRIBUTE_WORDS: dict[str, set[str]] = {
+    "rto": {"rto"},
+    "rpo": {"rpo"},
+    "sla": {"sla", "slas"},
+    "latency": {"latency", "response"},
+    "availability": {"availability", "available", "uptime"},
+    "scalability": {"scalability", "scale", "scaling", "concurrent", "peak"},
+    "encryption": {"encryption", "encrypted", "encrypt"},
+    "data_residency": {"residency", "sovereignty"},
+    "compliance": {"compliance", "compliant", "pci", "hipaa", "gdpr", "sox"},
+    "os": {"os", "operating"},
+    "runtime": {"runtime", "runtimes"},
+    "framework": {"framework", "frameworks"},
+    "business_criticality": {"critical", "criticality"},
+    "vcpus": {"vcpu", "vcpus", "cpu", "cpus", "cores"},
+    "memory_gb": {"memory", "ram"},
+    "disk_gb": {"disk", "storage"},
+}
+_RELATION_WORDS = {
+    "depend",
+    "depends",
+    "dependency",
+    "dependencies",
+    "uses",
+    "use",
+    "used",
+    "using",
+    "connect",
+    "connects",
+    "connected",
+    "call",
+    "calls",
+    "integrate",
+    "integrates",
+    "integration",
+    "talk",
+    "talks",
+    "database",
+    "databases",
+    "db",
+    "hosted",
+    "host",
+    "hosts",
+    "runs",
+}
+_DB_WORDS = {"database", "databases", "db", "datastore"}
+_HOST_WORDS = {"hosted", "host", "hosts", "server", "servers", "runs"}
+
+
+def _words(text: str) -> set[str]:
+    return {t.lower() for t in _TOKEN.findall(text or "")}
+
+
+def _key_words(entity_key: str) -> set[str]:
+    return {t for t in re.split(r"[^a-z0-9]+", entity_key.lower()) if len(t) >= 2}
+
+
+def _named_entities(words: set[str], keys: set[tuple[str, str]]) -> set[tuple[str, str]]:
+    """Entities the question names: every word of the entity's key appears in it
+    ("billing service" -> application:billing-service; "portal" alone does NOT name
+    server:app-portal-01)."""
+    named = set()
+    for etype, ekey in keys:
+        kw = _key_words(ekey) - {"01", "02"}
+        if kw and kw <= words and not kw <= _GENERIC:
+            named.add((etype, ekey))
+    return named
+
+
+def _named_attributes(words: set[str]) -> set[str]:
+    return {attr for attr, needles in _ATTRIBUTE_WORDS.items() if words & needles}
+
+
 def match_claims_to_question(question: str, claims: list[Claim]) -> list[Claim]:
-    tokens = _question_tokens(question)
-    hinted = _hinted_attributes(question)
-    matches: list[Claim] = []
-    for claim in claims:
-        value = claim.override_value or claim.value
-        blob = f"{claim.entity_type} {claim.entity_key} {claim.attribute} {value}"
-        blob_tokens = _question_tokens(blob)
-        if hinted and claim.attribute in hinted:
-            matches.append(claim)
-            continue
-        if tokens and tokens & blob_tokens:
-            matches.append(claim)
-    return matches
+    words = _words(question)
+    attrs = _named_attributes(words) or _hinted_attributes(question)
+    named = _named_entities(words, {(c.entity_type, c.entity_key) for c in claims})
+    phrases = [" ".join(sorted(_key_words(k), key=k.find)) for _t, k in named]
+
+    def mentions_named(claim: Claim) -> bool:
+        value = (claim.override_value or claim.value or "").lower()
+        return (claim.entity_type, claim.entity_key) in named or any(p and p in value for p in phrases)
+
+    if attrs:
+        candidates = [c for c in claims if c.attribute in attrs]
+        if named:
+            scoped = [c for c in candidates if mentions_named(c)]
+            if scoped:
+                return scoped
+        # The subject may only appear inside values ("RTO: 4 hours for Billing Service"
+        # under a business entity): narrow by the question's remaining words when any fit.
+        attribute_words = set().union(*(_ATTRIBUTE_WORDS.get(a, set()) for a in attrs))
+        subject = _question_tokens(question) - _GENERIC - attribute_words
+        if subject:
+            scoped = [c for c in candidates if subject & _question_tokens(c.override_value or c.value)]
+            if scoped:
+                return scoped
+        return candidates
+    if named:
+        own = [c for c in claims if (c.entity_type, c.entity_key) in named]
+        asked = _question_tokens(question) - _GENERIC - set().union(*(_key_words(k) for _t, k in named))
+        if not asked:
+            return own  # "tell me about the billing service"
+        # Something specific about a named entity: only facts that speak to it. None may
+        # (e.g. "which database does X use" is a relationship) — then edges/retrieval answer.
+        return [c for c in own if asked & _question_tokens(f"{c.attribute} {c.override_value or c.value}")]
+    tokens = _question_tokens(question) - _GENERIC
+    return [
+        c
+        for c in claims
+        if tokens & _question_tokens(f"{c.entity_type} {c.entity_key} {c.attribute} {c.override_value or c.value}")
+    ]
+
+
+def match_edges_to_question(question: str, claims: list[Claim], edges: list[DependencyEdge]) -> list[DependencyEdge]:
+    """Relationship questions ("which database does the customer portal use?") are
+    answered from the dependency graph — that link is an edge, never a claim."""
+    words = _words(question)
+    if not words & _RELATION_WORDS:
+        return []
+    keys = {(c.entity_type, c.entity_key) for c in claims}
+    keys |= {(e.source_type, e.source_key) for e in edges} | {(e.target_type, e.target_key) for e in edges}
+    named = _named_entities(words, keys)
+    if not named:
+        return []
+    related = [e for e in edges if (e.source_type, e.source_key) in named or (e.target_type, e.target_key) in named]
+    if words & _DB_WORDS:
+        related = [e for e in related if "database" in (e.source_type, e.target_type)]
+    elif words & _HOST_WORDS:
+        related = [e for e in related if "server" in (e.source_type, e.target_type)]
+    return related
 
 
 def _answer(
@@ -136,16 +296,8 @@ def _answer(
         }
         for c in matches
     ]
-    answer = (
-        "; ".join(
-            f"{item['entity']} {item['attribute']}={item['value']}" for item in values
-        )
-        if values
-        else empty
-    )
-    confidence = (
-        round(sum(c.confidence for c in matches) / len(matches), 2) if matches else 0.0
-    )
+    answer = "; ".join(f"{item['entity']} {item['attribute']}={item['value']}" for item in values) if values else empty
+    confidence = round(sum(c.confidence for c in matches) / len(matches), 2) if matches else 0.0
     return {
         "id": question_id,
         "origin": origin,
@@ -158,9 +310,7 @@ def _answer(
         or any(c.needs_human_review for c in matches)
         or len(supported) != len(matches),
         "claim_ids": [c.id for c in matches],
-        "evidence_refs": list(
-            dict.fromkeys(ref for c in supported for ref in (c.evidence_refs or []))
-        ),
+        "evidence_refs": list(dict.fromkeys(ref for c in supported for ref in (c.evidence_refs or []))),
         "assumptions": [] if matches else [empty],
         "answer_source": "template",
     }
@@ -190,6 +340,7 @@ def answer_custom_question(
     claims: list[Claim],
     retriever: Retriever | None = None,
     questionnaire_document_ids: frozenset[str] = frozenset(),
+    edges: list[DependencyEdge] | None = None,
 ) -> dict[str, Any]:
     matches = match_claims_to_question(question, claims)
     payload = _answer(
@@ -200,8 +351,14 @@ def answer_custom_question(
         EMPTY_CUSTOM,
         origin=origin,
     )
+    if edges is None:
+        edges = (
+            db.query(DependencyEdge).filter(DependencyEdge.assessment_id == assessment_id, not_rejected_edge()).all()
+        )
+    related = match_edges_to_question(question, claims, edges)
+    if related:
+        _add_edge_facts(payload, related)
     retrieved_ids: list[str] = []
-    retrieved_quotes: dict[str, str] = {}
     if retriever is not None:
         try:
             # Over-fetch and filter rather than requesting exactly 6 -- excluding
@@ -211,70 +368,115 @@ def answer_custom_question(
         except Exception:
             candidates = []
         chunks = [c for c in candidates if c.document_id not in questionnaire_document_ids][:6]
-        for chunk in chunks:
-            retrieved_ids.append(chunk.id)
-            retrieved_quotes[chunk.id] = (chunk.text or "")[:240]
-    payload["evidence_refs"] = list(
-        dict.fromkeys([*payload["evidence_refs"], *retrieved_ids])
-    )
-    if not matches and retrieved_ids:
-        quotes = [retrieved_quotes[cid] for cid in retrieved_ids if retrieved_quotes.get(cid)]
-        payload["answer"] = " ".join(quotes)[:500] if quotes else EMPTY_CUSTOM
-        payload["supported"] = bool(quotes)
-        payload["needs_human_review"] = not quotes
-        payload["assumptions"] = [] if quotes else [EMPTY_CUSTOM]
-        payload["confidence"] = 0.55 if quotes else 0.0
-    payload["_retrieved_quotes"] = retrieved_quotes
+        # Only chunks that actually contain something the question asks about are cited;
+        # the rest of the top-k is ranking noise, and citing it made answers look
+        # unsupported by their own sources.
+        terms = passage_terms(question) - _GENERIC
+        # One shared common word ("customer") isn't relevance; require two of the
+        # question's terms (or its only one).
+        needed = min(2, len(terms)) or 1
+        scored = [(relevant_passage(c.text or "", terms), c) for c in chunks]
+        relevant = [(passage, c) for (passage, score), c in scored if score >= needed]
+        retrieved_ids = [c.id for _p, c in relevant]
+        if not payload["facts"] and relevant:
+            passages = [passage for passage, _c in relevant]
+            payload["answer"] = " … ".join(passages)[:600]
+            payload["supported"] = True
+            payload["needs_human_review"] = False
+            payload["assumptions"] = []
+            payload["confidence"] = 0.55
+    payload["evidence_refs"] = list(dict.fromkeys([*payload["evidence_refs"], *retrieved_ids]))
     return payload
 
 
-def _attach_evidence(
-    db: Session, answers: list[dict[str, Any]], claims: list[Claim]
-) -> None:
-    evidence_by_chunk = resolve_evidence_map(
-        db,
-        [ref for answer in answers for ref in answer["evidence_refs"]],
+def _add_edge_facts(payload: dict[str, Any], edges: list[DependencyEdge]) -> None:
+    facts = [
+        {
+            "entity": f"{e.source_type}:{e.source_key}",
+            "attribute": e.rel_type,
+            "value": f"{e.target_type}:{e.target_key}",
+        }
+        for e in edges
+    ]
+    no_claim_facts = not payload["facts"]
+    payload["facts"] = [*payload["facts"], *facts]
+    text = "; ".join(f"{f['entity']} {f['attribute']} {f['value']}" for f in facts)
+    payload["answer"] = text if no_claim_facts else f"{payload['answer']}; {text}"
+    refs = [ref for e in edges for ref in (e.evidence_refs or [])]
+    payload["evidence_refs"] = list(dict.fromkeys([*payload["evidence_refs"], *refs]))
+    edge_conf = sum(e.confidence for e in edges) / len(edges)
+    payload["confidence"] = round(edge_conf if no_claim_facts else (payload["confidence"] + edge_conf) / 2, 2)
+    grounded = all(e.evidence_refs for e in edges)
+    payload["supported"] = grounded if no_claim_facts else payload["supported"] and grounded
+    payload["needs_human_review"] = (
+        (not grounded or any(e.needs_human_review for e in edges))
+        if no_claim_facts
+        else payload["needs_human_review"] or not grounded
     )
-    # A ref can only be attributed a claim's quote when it's actually grounded in that
-    # specific chunk's text (see `evidence.grounded_quote_for_chunk`) -- a claim's
-    # evidence_refs can span multiple chunks, and citations.py doesn't guarantee the quote
-    # appears verbatim in every one of them.
-    quote_by_ref: dict[str, str] = {}
-    for claim in claims:
-        if not claim.evidence_quote:
-            continue
-        for ref in claim.evidence_refs or []:
-            entry = evidence_by_chunk.get(ref)
-            if not entry:
-                continue
-            grounded = grounded_quote_for_chunk(entry, claim.evidence_quote)
-            if grounded:
-                quote_by_ref[ref] = grounded
+    if no_claim_facts:
+        payload["assumptions"] = []
+    payload["edge_ids"] = [e.id for e in edges]
+
+
+def _attach_evidence(db: Session, answers: list[dict[str, Any]], claims: list[Claim]) -> None:
+    """Resolve each answer's evidence refs to sources, quoting what supports THIS answer.
+
+    Per answer and per cited chunk: the quote of one of the answer's own facts, when that
+    quote is really in the chunk (`grounded_quote_for_chunk`); otherwise the passage of the
+    chunk that best matches the answer's question and facts. Quotes used to be shared
+    across answers (any claim's quote for a chunk showed under every answer citing it) and
+    retrieved chunks were quoted by their first 240 characters — a title or a table header.
+    """
+    evidence_by_chunk = resolve_evidence_map(db, [ref for answer in answers for ref in answer["evidence_refs"]])
+    claims_by_id = {c.id: c for c in claims}
+    edge_ids = [eid for answer in answers for eid in answer.get("edge_ids", [])]
+    edges_by_id = (
+        {e.id: e for e in db.query(DependencyEdge).filter(DependencyEdge.id.in_(edge_ids))} if edge_ids else {}
+    )
     for answer in answers:
-        # Quotes retrieved directly from a chunk's own text (the RAG fallback in
-        # `answer_custom_question`) are correct by construction -- no grounding check needed.
-        quote_by_ref.update(answer.pop("_retrieved_quotes", {}) or {})
-    for answer in answers:
-        answer["evidence"] = [
-            {
-                **public_evidence_fields(evidence_by_chunk[ref]),
-                "quote": quote_by_ref.get(ref),
-            }
-            for ref in answer["evidence_refs"]
-            if ref in evidence_by_chunk
+        own_quotes: list[tuple[list[str], str]] = [
+            (c.evidence_refs or [], c.evidence_quote)
+            for cid in answer.get("claim_ids", [])
+            if (c := claims_by_id.get(cid)) is not None and c.evidence_quote
         ]
+        own_quotes += [
+            (e.evidence_refs or [], e.evidence_quote)
+            for eid in answer.get("edge_ids", [])
+            if (e := edges_by_id.get(eid)) is not None and e.evidence_quote
+        ]
+        terms = (
+            passage_terms(
+                answer["question"], *(f"{f.get('entity', '')} {f.get('value', '')}" for f in answer.get("facts", []))
+            )
+            - _GENERIC
+        )
+        evidence = []
+        for ref in answer["evidence_refs"]:
+            entry = evidence_by_chunk.get(ref)
+            if entry is None:
+                continue
+            quote = None
+            for refs, fact_quote in own_quotes:
+                if ref in refs:
+                    quote = grounded_quote_for_chunk(entry, fact_quote)
+                    if quote:
+                        quote = label_table_row(entry.get("text", ""), quote)
+                        break
+            if quote is None:
+                passage, score = relevant_passage(entry.get("text", ""), terms)
+                quote = passage if score > 0 else None
+            evidence.append({**public_evidence_fields(entry), "quote": quote})
+        answer["evidence"] = evidence
+        answer.pop("_retrieved_quotes", None)
 
 
-def _standard_answers(
-    claims: list[Claim], edges: list[DependencyEdge]
-) -> list[dict[str, Any]]:
+def _standard_answers(claims: list[Claim], edges: list[DependencyEdge]) -> list[dict[str, Any]]:
     answers = [
         _answer(
             "estate_inventory",
             "What applications, servers, and databases are in scope?",
             claims,
-            lambda c: c.attribute == "name"
-            and c.entity_type in {"application", "server", "database"},
+            lambda c: c.attribute == "name" and c.entity_type in {"application", "server", "database"},
             "The uploaded evidence does not provide a complete estate inventory.",
         ),
         _answer(
@@ -295,16 +497,14 @@ def _standard_answers(
             "service_levels",
             "What availability, performance, recovery, and scale requirements apply?",
             claims,
-            lambda c: c.attribute
-            in {"sla", "availability", "latency", "rto", "rpo", "scalability"},
+            lambda c: c.attribute in {"sla", "availability", "latency", "rto", "rpo", "scalability"},
             "Service-level and capacity requirements are incomplete.",
         ),
         _answer(
             "security_compliance",
             "What security, compliance, encryption, and residency constraints apply?",
             claims,
-            lambda c: c.attribute
-            in {"compliance", "encryption", "data_residency", "security"},
+            lambda c: c.attribute in {"compliance", "encryption", "data_residency", "security"},
             "Security and compliance constraints are incomplete.",
         ),
         _answer(
@@ -320,9 +520,7 @@ def _standard_answers(
         dependency_answer.update(
             {
                 "answer": "; ".join(
-                    f"{e.source_type}:{e.source_key} {e.rel_type} "
-                    f"{e.target_type}:{e.target_key}"
-                    for e in edges
+                    f"{e.source_type}:{e.source_key} {e.rel_type} {e.target_type}:{e.target_key}" for e in edges
                 ),
                 "facts": [
                     {
@@ -336,9 +534,7 @@ def _standard_answers(
                 "supported": all(bool(e.evidence_refs) for e in edges),
                 "needs_human_review": any(e.needs_human_review for e in edges)
                 or any(not e.evidence_refs for e in edges),
-                "evidence_refs": list(
-                    dict.fromkeys(ref for e in edges for ref in (e.evidence_refs or []))
-                ),
+                "evidence_refs": list(dict.fromkeys(ref for e in edges for ref in (e.evidence_refs or []))),
                 "assumptions": [],
                 "answer_source": "template",
             }
@@ -354,11 +550,7 @@ def build_assessment_answers(
     retriever: Retriever | None = None,
 ) -> dict[str, Any]:
     claims = _selected_claims(db, assessment_id)
-    edges = (
-        db.query(DependencyEdge)
-        .filter(DependencyEdge.assessment_id == assessment_id, not_rejected_edge())
-        .all()
-    )
+    edges = db.query(DependencyEdge).filter(DependencyEdge.assessment_id == assessment_id, not_rejected_edge()).all()
     answers = _standard_answers(claims, edges)
     custom_rows = (
         db.query(EngagementQuestion)
@@ -378,6 +570,7 @@ def build_assessment_answers(
                 claims=claims,
                 retriever=retriever,
                 questionnaire_document_ids=questionnaire_document_ids,
+                edges=edges,
             )
         )
     _attach_evidence(db, answers, claims)
@@ -427,9 +620,7 @@ def cached_assessment_answers(
     while a run is in flight (or before one has completed) they are template-only — the
     claims are being rebuilt, so neither retrieval nor the LLM is worth paying for."""
     if assessment.status != PipelineStatus.completed:
-        return build_assessment_answers(
-            db, assessment.id, prose=GroundedProse(DisabledChatCompleter()), retriever=None
-        )
+        return build_assessment_answers(db, assessment.id, prose=GroundedProse(DisabledChatCompleter()), retriever=None)
     fingerprint = state_fingerprint(db, assessment, include_questions=True)
     if assessment.answers_cache is not None and assessment.answers_fingerprint == fingerprint:
         return assessment.answers_cache
@@ -552,9 +743,7 @@ def plan_dynamic_questions(db: Session, assessment_id: str) -> list[EngagementQu
 
     existing = {
         row.question_key
-        for row in db.query(EngagementQuestion)
-        .filter(EngagementQuestion.assessment_id == assessment_id)
-        .all()
+        for row in db.query(EngagementQuestion).filter(EngagementQuestion.assessment_id == assessment_id).all()
     }
     rows: list[EngagementQuestion] = []
     for planned in proposed:

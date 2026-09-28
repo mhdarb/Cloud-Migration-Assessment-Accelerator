@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.models.entities import (
     Assessment,
+    DependencyEdge,
     PipelineStatus,
     Questionnaire,
     QuestionnaireItem,
@@ -31,6 +32,7 @@ from app.services.assessment_questions import (
     answer_custom_question,
     state_fingerprint,
 )
+from app.services.inventory import not_rejected_edge
 from app.services.llm_reasoning import GroundedProse, get_grounded_prose
 from app.services.pipeline_lock import is_in_flight
 from app.services.ports import Retriever
@@ -166,6 +168,7 @@ def questionnaire_answers(
     items = _items(db, questionnaire.id)
     claims = _selected_claims(db, assessment.id)
     excluded = _questionnaire_document_ids(db, assessment.id)
+    edges = db.query(DependencyEdge).filter(DependencyEdge.assessment_id == assessment.id, not_rejected_edge()).all()
     answers = [
         answer_custom_question(
             db,
@@ -176,6 +179,7 @@ def questionnaire_answers(
             claims=claims,
             retriever=retriever,
             questionnaire_document_ids=excluded,
+            edges=edges,
         )
         for item in items
     ]
